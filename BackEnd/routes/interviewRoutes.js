@@ -2,6 +2,8 @@ import express from "express";
 import fs from "fs/promises";
 import path from "path";
 import Question from "../models/Question.js";
+import Parameter from "../models/Parameter.js";
+import { selectQuestions } from "../lib/selectQuestions.js";
 
 // const router = express.Router();
 
@@ -71,5 +73,20 @@ router.get('/extract-qas', async (req, res) => {
   }
 })
 
+router.post('/save-parameters', async (req, res) => {
+  try {
+    const { jobTitle, company, jobDescription } = req.body;
+
+    const interview = new Parameter({ jobTitle, company, jobDescription });
+    await interview.save();
+
+    res
+      .status(201)
+      .json({ message: "Parameters set successfully", interview });
+  } catch (error) {
+    console.error("Error saving parameters:", error);
+    res.status(500).json({ message: "Failed to set parameters", error });
+  }
+});
 // module.exports = router
 export default router
