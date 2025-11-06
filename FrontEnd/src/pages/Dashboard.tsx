@@ -3,60 +3,12 @@ import { readInterviews } from '../lib/storage'
 import { useAuth, SignedIn, SignedOut } from '@clerk/clerk-react'
 import { Navigate } from 'react-router-dom'
 import React, { useEffect, useState } from 'react';
-// import axios from 'axios';
-
-// interface Question {
-//   question_id: number;
-//   question_url: string;
-//   question_title: string;
-//   question_text: string;
-//   question_tags: string[];
-//   question_score: number;
-//   question_view_count: number;
-//   question_creation_date: number;
-//   answer_id?: number;
-//   answer_text?: string;
-//   answer_score?: number;
-//   answer_is_accepted: boolean;
-//   answer_has_code: boolean;
-//   answer_has_steps: boolean;
-//   answer_word_count: number;
-//   preference_answer_ok: boolean;
-//   rank_key: [number, number, number, number, number, number]; // Tuple from your rank_key
-// }
-
 
 export default function Dashboard() {
   const { isLoaded, isSignedIn, userId, getToken } = useAuth()
-  // const [questions, setQuestions] = useState<Question[]>([]);
-  // const [loading, setLoading] = useState<boolean>(true);
-  // const [error, setError] = useState<string | null>(null);
-
-  // if (!isLoaded) return <div /> // or spinner
-  // if (!isSignedIn) return <Navigate to="/login" replace />
 
   const interviews = readInterviews()
   const hasItems = interviews.length > 0
-
-  // useEffect(() => {
-  //   const fetchQuestions = async () => {
-  //     try {
-  //       const response = await fetch(`${import.meta.env.VITE_API_URL}/api/interviews/extract-qas`);
-  //       const data = await response.json();
-  //       setQuestions(data);
-  //     } catch (err) {
-  //       setError('Failed to load questions. Please try again.');
-  //       console.error(err);
-  //     } finally {
-  //       setLoading(false);
-  //     }
-  //   };
-
-  //   fetchQuestions();
-  // }, []); // Empty dependency array: Runs only once on mount
-
-  // if (loading) return <div>Loading questions...</div>;
-  // if (error) return <div>{error}</div>;
 
   return (
     <main className="min-h-[calc(100vh-4rem)] bg-[#0c0c0c] px-6 py-10">
