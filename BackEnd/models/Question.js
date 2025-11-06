@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 const { Schema } = mongoose;
 
 const questionSchema = new Schema({
@@ -21,4 +21,4 @@ const questionSchema = new Schema({
   rank_key: { type: [Number], required: true },
 });
 
-module.exports = mongoose.model('Question', questionSchema);
+export default mongoose.model('Question', questionSchema);
