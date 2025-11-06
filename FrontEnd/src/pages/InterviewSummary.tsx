@@ -154,8 +154,8 @@ export default function InterviewSummary(): JSX.Element {
             removeMountedWidgetElement();
             // Remove script only if we appended it (scriptRef)
             if (scriptRef.current && scriptRef.current.parentNode) {
-            scriptRef.current.parentNode.removeChild(scriptRef.current);
-            scriptRef.current = null;
+                scriptRef.current.parentNode.removeChild(scriptRef.current);
+                scriptRef.current = null;
             }
             setScriptStatus('idle');
             setScriptError(null);
@@ -173,9 +173,9 @@ export default function InterviewSummary(): JSX.Element {
         const ELEMENT_NAME = "elevenlabs-convai";
         // candidate script URLs — keep the one you used, and a common alternate
         const CANDIDATE_SRCS = [
-        "https://unpkg.com/@elevenlabs/convai-widget-embed",
-        "https://cdn.elevenlabs.io/convai-widget-embed.js",
-        "https://cdn.jsdelivr.net/npm/@elevenlabs/convai-widget-embed"
+            "https://unpkg.com/@elevenlabs/convai-widget-embed",
+            "https://cdn.elevenlabs.io/convai-widget-embed.js",
+            "https://cdn.jsdelivr.net/npm/@elevenlabs/convai-widget-embed"
         ];
 
         // poll helper: wait until customElements has the element or until timeout

@@ -61,21 +61,21 @@ router.get('/extract-qas', async (req, res) => {
   }
 });
 
-router.post("/api/interviews", async (req, res) => {
-  try {
-    const { jobTitle, company, jobDescription } = req.body;
+// router.post("/start", async (req, res) => {
+//   try {
+//     const { jobTitle, company, jobDescription } = req.body;
 
-    const interview = new Interview({ jobTitle, company, jobDescription });
-    await interview.save();
+//     const interview = new Interview({ jobTitle, company, jobDescription });
+//     await interview.save();
 
-    res
-      .status(201)
-      .json({ message: "Interview created successfully", interview });
-  } catch (error) {
-    console.error("Error saving interview:", error);
-    res.status(500).json({ message: "Failed to create interview", error });
-  }
-});
+//     res
+//       .status(201)
+//       .json({ message: "Interview created successfully", interview });
+//   } catch (error) {
+//     console.error("Error saving interview:", error);
+//     res.status(500).json({ message: "Failed to create interview", error });
+//   }
+// });
 
 router.post('/save-parameters', async (req, res) => {
   try {
