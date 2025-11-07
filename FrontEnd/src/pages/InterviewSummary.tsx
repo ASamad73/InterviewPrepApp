@@ -120,21 +120,44 @@ export default function InterviewSummary(): JSX.Element {
 
     function buildWidgetContext(qs: QuestionItem[]) {
         const instructions = [
-            `You are an interview agent for the position: "${jobTitle}" at "${company}".`,
-            `Ask the following questions in order. After asking each question, wait for the candidate to answer; then proceed to the next. Keep questions concise.`,
-            `If candidate answers briefly, you may ask at most one short clarification question, then continue.`,
-            `At the end, say "Interview complete."`
-        ].join(" ");
+            `You are a focused automated interview agent created to conduct a mock technical interview. Follow these rules exactly:
+
+            1) GREETING & PERMISSION
+            Begin by greeting the candidate once and ask for permission to start, with one concise sentence, for example:
+            "Hello — thank you for joining. May I begin the interview now?"
+            Wait for an explicit affirmative from the candidate (examples: "yes", "yep", "please start", "go ahead", "sure"). If no explicit affirmative is received in the first short reply, ask once more for permission. Proceed only after an explicit affirmative.
+
+            2) USE ONLY PROVIDED QUESTIONS
+            After permission is granted, you MUST ONLY ask the questions provided in the runtime "questions" array. Do not invent, infer, or ask about the job, company, or parameters — those are already supplied. Ask the questions in order. For each question: (a) ask it exactly and concisely, (b) wait for the candidate's answer before proceeding.
+
+            3) CLARIFICATION & FOLLOW-UPS
+            If the candidate's answer is very short, unclear, incomplete, or off-topic, ask at most one short, targeted clarification follow-up question. If clarification still does not produce a meaningful answer, accept the candidate's answer and move to the next question.
+
+            4) SKIPPING
+            If the candidate says "skip" or "pass", acknowledge briefly ("Okay, skipping that question.") and proceed. Allow returning to a skipped question only if the candidate explicitly requests it after the remaining questions are finished.
+
+            5) POLITENESS & LENGTH
+            Keep each question and follow-up concise (one or two short sentences). Keep tone professional and neutral.
+
+            6) FINISH
+            After all provided questions are done, conclude exactly with:
+            "Interview complete. Thank you for your time."
+            Do not ask additional questions after that closing line.
+
+            IMPORTANT: If runtime context contains a "questions" array, assume it is authoritative. Under no circumstance should you prompt the candidate for the job title, company, or job description — those are pre-supplied and must not be requested during the interview.`
+        ].join(' ');
 
         const questionTexts = qs.map(q => ({ id: q.question_id, title: q.question_title, text: q.question_text }));
+        console.log('building widget with questions:', questionTexts);
 
         return {
             system: instructions,
             job: { title: jobTitle, company, description },
             questions: questionTexts,
-            ui: { autoStart: true },
+            ui: { autoStart: true }, 
         };
     }
+
 
   // Remove any previously mounted widget element. Do NOT remove the global script unless we added it ourselves (scriptRef).
     function removeMountedWidgetElement() {
@@ -190,61 +213,79 @@ export default function InterviewSummary(): JSX.Element {
         return false;
         };
 
-        // helper: create widget element (safe)
         const createWidget = () => {
-        try {
-            // if custom element still not registered, abort
-            if (!customElements.get(ELEMENT_NAME)) {
-            console.warn("custom element not yet registered:", ELEMENT_NAME);
-            return false;
-            }
-            removeMountedWidgetElement();
-            const container = document.getElementById("widget-container");
-            if (!container) throw new Error("widget container missing");
-
-            const widgetEl = document.createElement(ELEMENT_NAME) as HTMLElement;
-
-            // set attributes & properties (both) — increase compatibility
-            widgetEl.setAttribute("context", JSON.stringify(contextObj));
-            try { widgetEl.setAttribute("questions", JSON.stringify(questionsArray || [])); } catch {}
-            try { widgetEl.setAttribute("job", JSON.stringify((contextObj as any).job || {})); } catch {}
-
-            try { (widgetEl as any).context = contextObj; } catch {}
-            try { (widgetEl as any).questions = questionsArray; } catch {}
-            try { (widgetEl as any).job = (contextObj as any).job || {}; } catch {}
-
-            if (interviewId) {
             try {
-                widgetEl.setAttribute("metadata", JSON.stringify({ interviewId }));
-                (widgetEl as any).metadata = { interviewId };
-            } catch {}
-            }
+                // if custom element still not registered, abort
+                if (!customElements.get(ELEMENT_NAME)) {
+                console.warn("custom element not yet registered:", ELEMENT_NAME);
+                return false;
+                }
+                removeMountedWidgetElement();
+                const container = document.getElementById("widget-container");
+                if (!container) throw new Error("widget container missing");
 
-            container.appendChild(widgetEl);
-            widgetRef.current = widgetEl;
-            setWidgetLoaded(true);
+                const widgetEl = document.createElement(ELEMENT_NAME) as HTMLElement;
 
-            // small debug log
-            setTimeout(() => {
-            try {
-                console.log("Widget mounted. element attributes/properties:", {
-                contextAttr: widgetEl.getAttribute("context"),
-                questionsAttr: widgetEl.getAttribute("questions"),
-                jobAttr: widgetEl.getAttribute("job"),
-                propContext: (widgetEl as any).context,
-                propQuestions: (widgetEl as any).questions,
-                propJob: (widgetEl as any).job,
-                });
-            } catch (e) {
-                console.warn("post-mount inspect failed", e);
+                // IMPORTANT: set your agent id here (required for the widget to fetch agent config and render)
+                const AGENT_ID = import.meta.env.VITE_ELEVEN_AGENT_ID; // <- replace with your actual agent id
+                widgetEl.setAttribute("agent-id", AGENT_ID);
+                try { (widgetEl as any)["agent-id"] = AGENT_ID; } catch {}
+
+                // set attributes & properties (both) — increase compatibility
+                widgetEl.setAttribute("context", JSON.stringify(contextObj));
+                try { widgetEl.setAttribute("questions", JSON.stringify(questionsArray || [])); } catch {}
+                try { widgetEl.setAttribute("job", JSON.stringify((contextObj as any).job || {})); } catch {}
+
+                try { (widgetEl as any).context = contextObj; } catch {}
+                try { (widgetEl as any).questions = questionsArray; } catch {}
+                try { (widgetEl as any).job = (contextObj as any).job || {}; } catch {}
+
+                // ensure widget is visible even if stylesheet is slow to load
+                try {
+                widgetEl.style.display = "block";
+                widgetEl.style.minHeight = "240px";
+                widgetEl.style.width = "100%";
+                } catch {}
+
+                if (interviewId) {
+                try {
+                    widgetEl.setAttribute("metadata", JSON.stringify({ interviewId }));
+                    (widgetEl as any).metadata = { interviewId };
+                } catch {}
+                }
+
+                // optional: dispatch an event the widget may listen to
+                try {
+                const ev = new CustomEvent("context-updated", { detail: { context: contextObj, questions: questionsArray } });
+                widgetEl.dispatchEvent(ev);
+                } catch {}
+
+                container.appendChild(widgetEl);
+                widgetRef.current = widgetEl;
+                setWidgetLoaded(true);
+
+                // small debug log
+                setTimeout(() => {
+                try {
+                    console.log("Widget mounted. element attributes/properties:", {
+                    agentIdAttr: widgetEl.getAttribute("agent-id"),
+                    contextAttr: widgetEl.getAttribute("context"),
+                    questionsAttr: widgetEl.getAttribute("questions"),
+                    jobAttr: widgetEl.getAttribute("job"),
+                    propContext: (widgetEl as any).context,
+                    propQuestions: (widgetEl as any).questions,
+                    propJob: (widgetEl as any).job,
+                    });
+                } catch (e) {
+                    console.warn("post-mount inspect failed", e);
+                }
+                }, 600);
+                return true;
+            } catch (err) {
+                console.error("createWidget error", err);
+                setScriptError(String(err));
+                return false;
             }
-            }, 600);
-            return true;
-        } catch (err) {
-            console.error("createWidget error", err);
-            setScriptError(String(err));
-            return false;
-        }
         };
 
         try {
