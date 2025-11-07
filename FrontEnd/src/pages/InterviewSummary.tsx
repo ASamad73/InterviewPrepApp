@@ -118,6 +118,31 @@ export default function InterviewSummary(): JSX.Element {
         }
     }
 
+    // const saveResponse = async (msg: any) => {
+    //     try {
+    //         await fetch(`/api/interviews/${interviewId}/responses`, {
+    //             method: "POST",
+    //             headers: { "Content-Type": "application/json" },
+    //             body: JSON.stringify({
+    //                 questionId: msg.question_id || msg.metadata?.questionId || null,
+    //                 answer: msg.text || msg.content || "",
+    //                 timestamp: msg.timestamp || Date.now(),
+    //             }),
+    //         });
+    //     } catch (err) {
+    //         console.error("Failed to save response:", err);
+    //     }
+    // };
+
+    // const finalizeInterview = async () => {
+    //     try {
+    //         await fetch(`/api/interviews/${interviewId}/complete`, { method: "POST" });
+    //         console.log("Interview marked complete.");
+    //     } catch (err) {
+    //         console.error("Failed to finalize interview:", err);
+    //     }
+    // };
+
     function buildWidgetContext(qs: QuestionItem[]) {
         const instructions = [
             `You are a focused automated interview agent created to conduct a mock technical interview. Follow these rules exactly:
@@ -242,29 +267,42 @@ export default function InterviewSummary(): JSX.Element {
 
                 // ensure widget is visible even if stylesheet is slow to load
                 try {
-                widgetEl.style.display = "block";
-                widgetEl.style.minHeight = "240px";
-                widgetEl.style.width = "100%";
+                    widgetEl.style.display = "block";
+                    widgetEl.style.minHeight = "240px";
+                    widgetEl.style.width = "100%";
                 } catch {}
 
                 if (interviewId) {
-                try {
-                    widgetEl.setAttribute("metadata", JSON.stringify({ interviewId }));
-                    (widgetEl as any).metadata = { interviewId };
-                } catch {}
+                    try {
+                        widgetEl.setAttribute("metadata", JSON.stringify({ interviewId }));
+                        (widgetEl as any).metadata = { interviewId };
+                    } catch {}
                 }
 
                 // optional: dispatch an event the widget may listen to
                 try {
-                const ev = new CustomEvent("context-updated", { detail: { context: contextObj, questions: questionsArray } });
-                widgetEl.dispatchEvent(ev);
+                    const ev = new CustomEvent("context-updated", { detail: { context: contextObj, questions: questionsArray } });
+                    widgetEl.dispatchEvent(ev);
                 } catch {}
 
                 container.appendChild(widgetEl);
                 widgetRef.current = widgetEl;
                 setWidgetLoaded(true);
 
-                // small debug log
+                // widgetEl.addEventListener("convai-message", (e: any) => {
+                //     const msg = e.detail;
+                //     console.log("Interview message event:", msg);
+
+                //     if (msg.role === "user" || msg.role === "candidate") {
+                //         saveResponse(msg);
+                //     }
+                // });
+
+                // widgetEl.addEventListener("convai-finished", (e: any) => {
+                //     console.log("Interview finished:", e.detail);
+                //     finalizeInterview();
+                // });
+
                 setTimeout(() => {
                 try {
                     console.log("Widget mounted. element attributes/properties:", {
@@ -389,7 +427,7 @@ export default function InterviewSummary(): JSX.Element {
         setScriptError(String(err?.message || err));
         setScriptStatus('error');
         }
-        }
+    }
 
     // Primary "Start interview" orchestration
     const startInterview = async () => {
