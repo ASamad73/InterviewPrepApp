@@ -119,45 +119,76 @@ export default function InterviewSummary(): JSX.Element {
     }
 
     function buildWidgetContext(qs: QuestionItem[]) {
-        const instructions = [
-            `You are a focused automated interview agent created to conduct a mock technical interview. Follow these rules exactly:
-
-            1) GREETING & PERMISSION
-            Begin by greeting the candidate once and ask for permission to start, with one concise sentence, for example:
-            "Hello — thank you for joining. May I begin the interview now?"
-            Wait for an explicit affirmative from the candidate (examples: "yes", "yep", "please start", "go ahead", "sure"). If no explicit affirmative is received in the first short reply, ask once more for permission. Proceed only after an explicit affirmative.
-
-            2) USE ONLY PROVIDED QUESTIONS
-            After permission is granted, you MUST ONLY ask the questions provided in the runtime "questions" array. Do not invent, infer, or ask about the job, company, or parameters — those are already supplied. Ask the questions in order. For each question: (a) ask it exactly and concisely, (b) wait for the candidate's answer before proceeding.
-
-            3) CLARIFICATION & FOLLOW-UPS
-            If the candidate's answer is very short, unclear, incomplete, or off-topic, ask at most one short, targeted clarification follow-up question. If clarification still does not produce a meaningful answer, accept the candidate's answer and move to the next question.
-
-            4) SKIPPING
-            If the candidate says "skip" or "pass", acknowledge briefly ("Okay, skipping that question.") and proceed. Allow returning to a skipped question only if the candidate explicitly requests it after the remaining questions are finished.
-
-            5) POLITENESS & LENGTH
-            Keep each question and follow-up concise (one or two short sentences). Keep tone professional and neutral.
-
-            6) FINISH
-            After all provided questions are done, conclude exactly with:
-            "Interview complete. Thank you for your time."
-            Do not ask additional questions after that closing line.
-
-            IMPORTANT: If runtime context contains a "questions" array, assume it is authoritative. Under no circumstance should you prompt the candidate for the job title, company, or job description — those are pre-supplied and must not be requested during the interview.`
+        // Build the system/runtime instruction (concise but strict)
+        const runtimeInstructions = [
+            `You are a focused automated interview agent created to conduct a mock technical interview. Follow these rules exactly:`,
+            `1) GREETING & PERMISSION: Begin by greeting once and ask for permission to start. Wait for explicit affirmative (examples: "yes", "go ahead", "please start"). Ask once more if unclear and proceed only after explicit permission.`,
+            `2) USE ONLY PROVIDED QUESTIONS: After permission, ONLY ask the questions provided in the runtime 'questions' array (do not invent or ask about job/company). Ask in order, wait for answer before proceeding.`,
+            `3) CLARIFICATION: If answer is short/unclear, ask AT MOST ONE short clarifying question, then move on.`,
+            `4) SKIPPING: If user says "skip" or "pass", acknowledge and go to next question. Allow returning only if explicitly requested after remaining questions.`,
+            `5) FINISH: After all provided questions, say exactly: "Interview complete. Thank you for your time."`
         ].join(' ');
 
-        const questionTexts = qs.map(q => ({ id: q.question_id, title: q.question_title, text: q.question_text }));
-        console.log('building widget with questions:', questionTexts);
+        // Normalize question objects to { id, title, text } using fallbacks
+        const questionTexts = (qs || []).map((q) => ({
+            id: q.question_id ?? (q as any).id ?? null,
+            title: q.question_title ?? (q as any).title ?? '',
+            text: q.question_text ?? (q as any).text ?? (q as any).question ?? '',
+        })).filter(q => q.id != null); // drop any malformed entries
 
+        console.log('building widget with questions (normalized):', questionTexts);
+
+        // The widget expects a `context` object — include your instructions and the question list there.
+        // We set both a `system` key and an explicit `runtimeInstructions` key to be defensive.
         return {
-            system: instructions,
+            system: runtimeInstructions,            // helpful if widget expects top-level system
+            runtimeInstructions,                    // explicit key you control
             job: { title: jobTitle, company, description },
             questions: questionTexts,
-            ui: { autoStart: true }, 
+            ui: { autoStart: true },
         };
     }
 
+
+    // function buildWidgetContext(qs: QuestionItem[]) {
+    //     const instructions = [
+    //         `You are a focused automated interview agent created to conduct a mock technical interview. Follow these rules exactly:
+
+    //         1) GREETING & PERMISSION
+    //         Begin by greeting the candidate once and ask for permission to start, with one concise sentence, for example:
+    //         "Hello — thank you for joining. May I begin the interview now?"
+    //         Wait for an explicit affirmative from the candidate (examples: "yes", "yep", "please start", "go ahead", "sure"). If no explicit affirmative is received in the first short reply, ask once more for permission. Proceed only after an explicit affirmative.
+
+    //         2) USE ONLY PROVIDED QUESTIONS
+    //         After permission is granted, you MUST ONLY ask the questions provided in the runtime "questions" array. Do not invent, infer, or ask about the job, company, or parameters — those are already supplied. Ask the questions in order. For each question: (a) ask it exactly and concisely, (b) wait for the candidate's answer before proceeding.
+
+    //         3) CLARIFICATION & FOLLOW-UPS
+    //         If the candidate's answer is very short, unclear, incomplete, or off-topic, ask at most one short, targeted clarification follow-up question. If clarification still does not produce a meaningful answer, accept the candidate's answer and move to the next question.
+
+    //         4) SKIPPING
+    //         If the candidate says "skip" or "pass", acknowledge briefly ("Okay, skipping that question.") and proceed. Allow returning to a skipped question only if the candidate explicitly requests it after the remaining questions are finished.
+
+    //         5) POLITENESS & LENGTH
+    //         Keep each question and follow-up concise (one or two short sentences). Keep tone professional and neutral.
+
+    //         6) FINISH
+    //         After all provided questions are done, conclude exactly with:
+    //         "Interview complete. Thank you for your time."
+    //         Do not ask additional questions after that closing line.
+
+    //         IMPORTANT: If runtime context contains a "questions" array, assume it is authoritative. Under no circumstance should you prompt the candidate for the job title, company, or job description — those are pre-supplied and must not be requested during the interview.`
+    //     ].join(' ');
+
+    //     const questionTexts = qs.map(q => ({ id: q.question_id, title: q.question_title, text: q.question_text }));
+    //     console.log('building widget with questions:', questionTexts);
+
+    //     return {
+    //         system: instructions,
+    //         job: { title: jobTitle, company, description },
+    //         questions: questionTexts,
+    //         ui: { autoStart: true }, 
+    //     };
+    // }
 
   // Remove any previously mounted widget element. Do NOT remove the global script unless we added it ourselves (scriptRef).
     function removeMountedWidgetElement() {
@@ -232,19 +263,33 @@ export default function InterviewSummary(): JSX.Element {
                 try { (widgetEl as any)["agent-id"] = AGENT_ID; } catch {}
 
                 // set attributes & properties (both) — increase compatibility
-                widgetEl.setAttribute("context", JSON.stringify(contextObj));
-                try { widgetEl.setAttribute("questions", JSON.stringify(questionsArray || [])); } catch {}
-                try { widgetEl.setAttribute("job", JSON.stringify((contextObj as any).job || {})); } catch {}
+                // widgetEl.setAttribute("context", JSON.stringify(contextObj));
+                // try { widgetEl.setAttribute("questions", JSON.stringify(questionsArray || [])); } catch {}
+                // try { widgetEl.setAttribute("job", JSON.stringify((contextObj as any).job || {})); } catch {}
 
-                try { (widgetEl as any).context = contextObj; } catch {}
-                try { (widgetEl as any).questions = questionsArray; } catch {}
-                try { (widgetEl as any).job = (contextObj as any).job || {}; } catch {}
+                // try { (widgetEl as any).context = contextObj; } catch {}
+                // try { (widgetEl as any).questions = questionsArray; } catch {}
+                // try { (widgetEl as any).job = (contextObj as any).job || {}; } catch {}
+                // after creating widgetEl
+                const payload = contextObj as any;
+
+                // Set attributes and properties — include multiple keys to maximize compatibility
+                try { widgetEl.setAttribute("context", JSON.stringify(payload)); } catch {}
+                try { widgetEl.setAttribute("data-context", JSON.stringify(payload)); } catch {}
+                try { (widgetEl as any).context = payload; } catch {}
+                try { (widgetEl as any)['data-context'] = payload; } catch {}
+
+                // Also set questions/job redundantly (some widgets read these directly)
+                try { widgetEl.setAttribute("questions", JSON.stringify(payload.questions || [])); } catch {}
+                try { (widgetEl as any).questions = payload.questions || []; } catch {}
+                try { widgetEl.setAttribute("job", JSON.stringify(payload.job || {})); } catch {}
+                try { (widgetEl as any).job = payload.job || {}; } catch {}
 
                 // ensure widget is visible even if stylesheet is slow to load
                 try {
-                widgetEl.style.display = "block";
-                widgetEl.style.minHeight = "240px";
-                widgetEl.style.width = "100%";
+                    widgetEl.style.display = "block";
+                    widgetEl.style.minHeight = "240px";
+                    widgetEl.style.width = "100%";
                 } catch {}
 
                 if (interviewId) {
