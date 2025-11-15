@@ -134,4 +134,46 @@ router.get('/:id/questions', async (req, res) => {
   }
 })
 
+// router.post('/:id/finish', async (req, res) => {
+//   try {
+//     const interviewId = req.params.id;
+//     if (!interviewId) return res.status(400).json({ ok: false, message: 'Missing interview id' });
+
+//     const interview = await Interview.findById(interviewId);
+//     if (!interview) return res.status(404).json({ ok: false, message: 'Interview not found' });
+
+//     // Optionally append a final transcript if provided
+//     const { question_id, transcript } = req.body ?? {};
+//     if (question_id && transcript) {
+//       interview.answers.push({
+//         question_id,
+//         question_title: '', 
+//         question_text: '',
+//         transcript,
+//       });
+//     }
+
+//     interview.status = 'completed';
+//     interview.currentIndex = (interview.selectedQuestions?.length) ?? interview.currentIndex ?? 0;
+
+//     await interview.save();
+
+//     // return a safe representation
+//     return res.json({
+//       ok: true,
+//       message: 'Interview marked as finished',
+//       interview: {
+//         id: interview._id.toString(),
+//         status: interview.status,
+//         currentIndex: interview.currentIndex,
+//         selectedQuestions: interview.selectedQuestions,
+//         answersCount: interview.answers?.length ?? 0,
+//       },
+//     });
+//   } catch (err) {
+//     console.error('finish interview error', err);
+//     return res.status(500).json({ ok: false, message: 'Server error', error: String(err) });
+//   }
+// });
+
 export default router

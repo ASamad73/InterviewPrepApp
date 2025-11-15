@@ -121,12 +121,32 @@ export default function InterviewSummary(): JSX.Element {
     function buildWidgetContext(qs: QuestionItem[]) {
         // Build the system/runtime instruction (concise but strict)
         const runtimeInstructions = [
-            `You are a focused automated interview agent created to conduct a mock technical interview. Follow these rules exactly:`,
-            `1) GREETING & PERMISSION: Begin by greeting once and ask for permission to start. Wait for explicit affirmative (examples: "yes", "go ahead", "please start"). Ask once more if unclear and proceed only after explicit permission.`,
-            `2) USE ONLY PROVIDED QUESTIONS: After permission, ONLY ask the questions provided in the runtime 'questions' array (do not invent or ask about job/company). Ask in order, wait for answer before proceeding.`,
-            `3) CLARIFICATION: If answer is short/unclear, ask AT MOST ONE short clarifying question, then move on.`,
-            `4) SKIPPING: If user says "skip" or "pass", acknowledge and go to next question. Allow returning only if explicitly requested after remaining questions.`,
-            `5) FINISH: After all provided questions, say exactly: "Interview complete. Thank you for your time."`
+            `You are an automated interview agent used only to run recorded mock technical interviews. Follow these rules exactly.
+                1) Greeting & permission — Always begin with one concise greeting and ask for permission to start, 
+                e.g. “Hello — thank you for joining. May I begin the interview now?” Wait for an explicit affirmative 
+                (“yes”, “please start”, “go ahead”, “sure”). If the candidate’s first reply is not explicit, ask once more. Proceed only after explicit permission.
+                
+                2) Authority of runtime questions — If the runtime context provided by the embed contains a key called questions (an ordered array of question objects), 
+                you MUST ONLY ask the questions in that array and ask them in order. Do not invent, add, expand, ask about the 
+                job title, company, available roles, or anything outside those questions. The runtime questions array is authoritative.
+                
+                3) Asking & waiting — For each question: ask it exactly and concisely, then wait for the candidate’s spoken answer before moving on.
+
+                4) Clarification — If the candidate’s answer is very short, unclear, or incomplete, ask at most one short clarifying follow-up. 
+                If that follow-up still yields an inadequate answer, accept it and move to the next question.
+
+                5) Skipping — If the candidate says “skip” or “pass”, acknowledge briefly (“Okay, skipping that question.”) and move on. 
+                Allow returning to a skipped question only if the candidate explicitly asks to return after the remaining questions are completed.
+
+                6) End command — If the candidate says “end interview”, “stop interview”, or “finish”, immediately stop the interview flow 
+                and say exactly: “Interview complete. Thank you for your time.” Do not ask additional questions.
+
+                7) Webhook / persistence — If webhook/event hooks are configured for the embed, emit an event at the end of each question 
+                turn with the candidate’s transcript and the question id. Also emit a final “interview.finished” event when done. 
+                (This is informational. The embed platform will send webhooks — ensure your server endpoint accepts them.)
+
+            IMPORTANT: If runtime context does not contain questions, ask one short question to collect job/role summary then 
+            request permission to proceed. Otherwise do not prompt for job info.`
         ].join(' ');
 
         // Normalize question objects to { id, title, text } using fallbacks
@@ -137,6 +157,7 @@ export default function InterviewSummary(): JSX.Element {
         })).filter(q => q.id != null); // drop any malformed entries
 
         console.log('building widget with questions (normalized):', questionTexts);
+        // const stopPhrases = ['end interview', 'stop interview', 'finish', 'end'];
 
         // The widget expects a `context` object — include your instructions and the question list there.
         // We set both a `system` key and an explicit `runtimeInstructions` key to be defensive.
@@ -146,6 +167,7 @@ export default function InterviewSummary(): JSX.Element {
             job: { title: jobTitle, company, description },
             questions: questionTexts,
             ui: { autoStart: true },
+            // __meta: { stopPhrases } 
         };
     }
 
@@ -454,6 +476,29 @@ export default function InterviewSummary(): JSX.Element {
         }
     };
 
+    // const endInterview = async () => {
+    //     if (!interviewId) {
+    //         setError("Interview not created yet.");
+    //         return;
+    //     }
+    //     try {
+    //         const headers = await getAuthHeaders();
+    //         await fetch(`${API}/api/interviews/${interviewId}/finish`, 
+    //             { 
+    //                 method: "POST", 
+    //                 headers 
+    //             }
+    //         );
+    //         setInterviewStarted(false);
+    //         setWidgetLoaded(false);
+    //         // also remove widget
+    //         removeMountedWidgetElement();
+    //     } catch (e) {
+    //         console.error("finish error", e);
+    //         setError("Failed to finish interview.");
+    //     }
+    // };
+
     useEffect(() => {
         // cleanup when leaving page
         return () => {
@@ -462,73 +507,80 @@ export default function InterviewSummary(): JSX.Element {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-  return (
-    <main className="min-h-[calc(100vh-4rem)] bg-[#0c0c0c] px-6 py-10">
-      <div className="mx-auto max-w-2xl">
-        <h1 className="text-2xl font-semibold text-white">Interview Summary</h1>
+    return (
+        <main className="min-h-[calc(100vh-4rem)] bg-[#0c0c0c] px-6 py-10">
+            <div className="mx-auto max-w-2xl">
+                <h1 className="text-2xl font-semibold text-white">Interview Summary</h1>
 
-        <div className="mt-6 text-white">
-          <p className="text-lg">Job Title: {jobTitle}</p>
-          <p className="text-lg">Company: {company}</p>
-          {description && <p className="mt-2 text-sm text-gray-300">{description}</p>}
-        </div>
-
-        <div className="mt-6">
-          <div className="flex items-center gap-3">
-            <div className="text-sm text-gray-300">Interview ID:</div>
-            <div className="text-sm text-emerald-300">{interviewId ?? "Not created yet"}</div>
-          </div>
-
-          <div className="mt-4 space-x-2">
-            <button
-              className="rounded-md bg-[#3ecf8e] px-4 py-2 text-sm font-semibold text-black hover:bg-[#36be81]"
-              onClick={startInterview}
-              disabled={creating || loading || widgetLoaded}
-            >
-              {creating ? "Creating..." : loading ? "Loading..." : widgetLoaded ? "Widget loaded" : "Start interview"}
-            </button>
-
-            <button
-              className="rounded-md border border-white/10 px-4 py-2 text-sm text-gray-300 hover:bg-white/5"
-              onClick={() => navigate(-1)}
-            >
-              Edit parameters
-            </button>
-
-            {widgetLoaded && (
-              <button
-                className="rounded-md border border-white/10 px-3 py-2 text-sm text-gray-300 hover:bg-white/5"
-                onClick={() => {
-                  if (!interviewId) return;
-                  startInterview();
-                }}
-              >
-                Reload widget
-              </button>
-            )}
-          </div>
-
-            {error && <div className="mt-4 rounded-md bg-red-800/60 p-3 text-red-100">{error}</div>}
-
-            {/* <div id="widget-container" className="mt-8 min-h-[200px]" /> */}
-            <div id="widget-container" className="mt-8 min-h-[200px]" />
-
-            {/* DEBUG PANEL */}
-            <div className="mt-3 text-sm text-gray-400">
-            <div>Widget script status: <span className="text-emerald-300 ml-2">{scriptStatus}</span></div>
-            {scriptRef.current?.src && <div>Script src: <code className="text-xs">{scriptRef.current.src}</code></div>}
-            {scriptError && <div className="mt-1 text-red-400">Error: {scriptError}</div>}
-            {!widgetLoaded && !scriptError && <div className="mt-1 text-gray-500">If the widget does not appear after a few seconds, check the console for logs / network errors.</div>}
-            </div>
-
-            {interviewStarted && (
-                <div className="mt-4 text-sm text-gray-400">
-                The agent should now ask questions from your selected dataset. To persist transcripts you must either
-                configure the Convai/ElevenLabs webhook to POST transcripts to your server or capture/upload audio + call STT endpoints.
+                <div className="mt-6 text-white">
+                    <p className="text-lg">Job Title: {jobTitle}</p>
+                    <p className="text-lg">Company: {company}</p>
+                    {description && <p className="mt-2 text-sm text-gray-300">{description}</p>}
                 </div>
-            )}
-        </div>
-      </div>
-    </main>
-  );
+
+                <div className="mt-6">
+                    <div className="flex items-center gap-3">
+                    <div className="text-sm text-gray-300">Interview ID:</div>
+                    <div className="text-sm text-emerald-300">{interviewId ?? "Not created yet"}</div>
+                </div>
+
+                <div className="mt-4 space-x-2">
+                    <button
+                        className="rounded-md bg-[#3ecf8e] px-4 py-2 text-sm font-semibold text-black hover:bg-[#36be81]"
+                        onClick={startInterview}
+                        disabled={creating || loading || widgetLoaded}
+                    >
+                        {creating ? "Creating..." : loading ? "Loading..." : widgetLoaded ? "Widget loaded" : "Start interview"}
+                    </button>
+
+                    <button
+                        className="rounded-md border border-white/10 px-4 py-2 text-sm text-gray-300 hover:bg-white/5"
+                        onClick={() => navigate(-1)}
+                    >
+                        Edit parameters
+                    </button>
+
+                    {/* <button
+                        className="rounded-md border border-white/10 px-4 py-2 text-sm text-gray-300 hover:bg-white/5"
+                        onClick={endInterview}
+                    >
+                        End Interview
+                    </button> */}
+
+                    {widgetLoaded && (
+                        <button
+                            className="rounded-md border border-white/10 px-3 py-2 text-sm text-gray-300 hover:bg-white/5"
+                            onClick={() => {
+                            if (!interviewId) return;
+                            startInterview();
+                            }}
+                        >
+                            Reload widget
+                        </button>
+                    )}
+                </div>
+
+                    {error && <div className="mt-4 rounded-md bg-red-800/60 p-3 text-red-100">{error}</div>}
+
+                    {/* <div id="widget-container" className="mt-8 min-h-[200px]" /> */}
+                    <div id="widget-container" className="mt-8 min-h-[200px]" />
+
+                    {/* DEBUG PANEL */}
+                    <div className="mt-3 text-sm text-gray-400">
+                        <div>Widget script status: <span className="text-emerald-300 ml-2">{scriptStatus}</span></div>
+                        {scriptRef.current?.src && <div>Script src: <code className="text-xs">{scriptRef.current.src}</code></div>}
+                        {scriptError && <div className="mt-1 text-red-400">Error: {scriptError}</div>}
+                        {!widgetLoaded && !scriptError && <div className="mt-1 text-gray-500">If the widget does not appear after a few seconds, check the console for logs / network errors.</div>}
+                    </div>
+
+                    {interviewStarted && (
+                        <div className="mt-4 text-sm text-gray-400">
+                        The agent should now ask questions from your selected dataset. To persist transcripts you must either
+                        configure the Convai/ElevenLabs webhook to POST transcripts to your server or capture/upload audio + call STT endpoints.
+                        </div>
+                    )}
+                </div>
+            </div>
+        </main>
+    );
 }
