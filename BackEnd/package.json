@@ -3,6 +3,8 @@
   "dependencies": {
     "@clerk/clerk-sdk-node": "^4.13.23",
     "@clerk/express": "^1.7.44",
+    "@google/generative-ai": "^0.24.1",
+    "axios": "^1.13.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "expess": "^0.0.1-security",
