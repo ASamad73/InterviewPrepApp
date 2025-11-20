@@ -27,6 +27,7 @@ export default function InterviewSummary(): JSX.Element {
     const [description, setDescription] = useState<string>(state.description ?? "");
 
     const [questions, setQuestions] = useState<QuestionItem[]>([]);
+    const [transcript, setTranscript] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [creating, setCreating] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -37,8 +38,6 @@ export default function InterviewSummary(): JSX.Element {
     const [scriptError, setScriptError] = useState<string | null>(null);
 
 
-    // If we appended the script, scriptRef.current points to it.
-    // If the script already existed in DOM before this component loaded, we won't set scriptRef.
     const scriptRef = useRef<HTMLScriptElement | null>(null);
     const widgetRef = useRef<HTMLElement | null>(null);
 
@@ -57,7 +56,6 @@ export default function InterviewSummary(): JSX.Element {
         return headers;
     }
 
-  // Ensure interview exists (create via save-parameters if no id present)
     async function ensureInterviewExists() {
         if (interviewId) return interviewId;
         setCreating(true);
@@ -93,7 +91,6 @@ export default function InterviewSummary(): JSX.Element {
         }
     }
 
-  // Fetch selected questions for an interview id
     async function fetchSelectedQuestions(id: string) {
         setLoading(true);
         setError(null);
@@ -101,13 +98,13 @@ export default function InterviewSummary(): JSX.Element {
             const headers = await getAuthHeaders();
             const res = await fetch(`${API}/api/interviews/${id}/questions`, { method: "GET", headers });
             const body = await res.json().catch(() => null);
-        if (!res.ok) {
-            throw new Error(body?.message || `Failed to fetch questions (${res.status})`);
-        }
-        if (!body || !Array.isArray(body.questions)) {
-            throw new Error("Invalid response for questions");
-        }
-        setQuestions(body.questions);
+            if (!res.ok) {
+                throw new Error(body?.message || `Failed to fetch questions (${res.status})`);
+            }
+            if (!body || !Array.isArray(body.questions)) {
+                throw new Error("Invalid response for questions");
+            }
+            setQuestions(body.questions);
             return body.questions;
         } catch (err: any) {
             console.error("fetchSelectedQuestions error", err);
@@ -149,19 +146,22 @@ export default function InterviewSummary(): JSX.Element {
 
             5) Skipping — If the candidate says “skip” or “pass”, acknowledge briefly (“Okay, skipping that question.”) and move on. 
             Allow returning to a skipped question only if the candidate explicitly asks to return after the remaining questions are completed.
-
-            6) End command — If the candidate says “end interview”, “stop interview”, or “finish”, immediately stop the interview flow 
-            and say exactly: “Interview complete. Thank you for your time.” Do not ask additional questions.
-
-            7) Webhook / persistence — If webhook/event hooks are configured for the embed, emit an event at the end of each question 
+            
+            6) Webhook / persistence — If webhook/event hooks are configured for the embed, emit an event at the end of each question 
             turn with the candidate’s transcript and the question id. Also emit a final “interview.finished” event when done. 
             (This is informational. The embed platform will send webhooks — ensure your server endpoint accepts them.)
 
+            7) Ending the interview — After receiving and acknowledging the answer to the last question (including any clarification), 
+            immediately say exactly: “Interview complete. Thank you for your time.” Do not ask additional questions or continue the conversation. 
+            End the session.
+            
             IMPORTANT: Do not prompt for job info, role summary, or anything else outside the provided questions.
-        `;
-
+            `;
+            
+        // 6) End command — If the candidate says “end interview”, “stop interview”, or “finish”, immediately stop the interview flow 
+        // and say exactly: “Interview complete. Thank you for your time.” Do not ask additional questions.
         console.log('Building widget with embedded prompt:', { fullSystemPrompt, questionsList });
-        // const stopPhrases = ['end interview', 'stop interview', 'finish', 'end'];
+        // const stopPhrases = ['end interview', 'stop interview', 'finish', 'end']; //end added
 
         // The widget expects a `context` object — include your instructions and the question list there.
         // We set both a `system` key and an explicit `runtimeInstructions` key to be defensive.
@@ -195,371 +195,173 @@ export default function InterviewSummary(): JSX.Element {
         }
     }
 
-    // async function loadAndMountWidget(contextObj: object, questionsArray: QuestionItem[]) {
-    //     removeMountedWidgetElement();
-    //     setWidgetLoaded(false);
-    //     setScriptError(null);
-    //     setScriptStatus('idle');
-
-    //     const ELEMENT_NAME = "elevenlabs-convai";
-    //     // candidate script URLs — keep the one you used, and a common alternate
-    //     const CANDIDATE_SRCS = [
-    //         "https://unpkg.com/@elevenlabs/convai-widget-embed",
-    //         "https://cdn.elevenlabs.io/convai-widget-embed.js",
-    //         "https://cdn.jsdelivr.net/npm/@elevenlabs/convai-widget-embed"
-    //     ];
-
-    //     // poll helper: wait until customElements has the element or until timeout
-    //     const waitForElementRegistered = async (elementName: string, maxWaitMs = 5000, interval = 150) => {
-    //     const start = Date.now();
-    //     while (Date.now() - start < maxWaitMs) {
-    //         if (customElements && customElements.get(elementName)) {
-    //         return true;
-    //         }
-    //         await new Promise((r) => setTimeout(r, interval));
-    //     }
-    //     return false;
-    //     };
-
-    //     const createWidget = () => {
-    //         try {
-    //             // if custom element still not registered, abort
-    //             if (!customElements.get(ELEMENT_NAME)) {
-    //             console.warn("custom element not yet registered:", ELEMENT_NAME);
-    //             return false;
-    //             }
-    //             console.log("Creating widget element: ", customElements.get(ELEMENT_NAME));
-    //             removeMountedWidgetElement();
-    //             const container = document.getElementById("widget-container");
-    //             if (!container) throw new Error("widget container missing");
-
-    //             const widgetEl = document.createElement(ELEMENT_NAME) as HTMLElement;
-
-    //             // IMPORTANT: set your agent id here (required for the widget to fetch agent config and render)
-    //             const AGENT_ID = import.meta.env.VITE_ELEVEN_AGENT_ID; // <- replace with your actual agent id
-    //             widgetEl.setAttribute("agent-id", AGENT_ID);
-    //             try { (widgetEl as any)["agent-id"] = AGENT_ID; } catch {}
-
-    //             // set attributes & properties (both) — increase compatibility
-    //             // widgetEl.setAttribute("context", JSON.stringify(contextObj));
-    //             // try { widgetEl.setAttribute("questions", JSON.stringify(questionsArray || [])); } catch {}
-    //             // try { widgetEl.setAttribute("job", JSON.stringify((contextObj as any).job || {})); } catch {}
-
-    //             // try { (widgetEl as any).context = contextObj; } catch {}
-    //             // try { (widgetEl as any).questions = questionsArray; } catch {}
-    //             // try { (widgetEl as any).job = (contextObj as any).job || {}; } catch {}
-    //             // after creating widgetEl
-    //             const payload = contextObj as any;
-
-    //             // Set attributes and properties — include multiple keys to maximize compatibility
-    //             try { widgetEl.setAttribute("context", JSON.stringify(payload)); } catch {}
-    //             try { widgetEl.setAttribute("data-context", JSON.stringify(payload)); } catch {}
-    //             try { (widgetEl as any).context = payload; } catch {}
-    //             try { (widgetEl as any)['data-context'] = payload; } catch {}
-
-    //             // Also set questions/job redundantly (some widgets read these directly)
-    //             try { widgetEl.setAttribute("questions", JSON.stringify(payload.questions || [])); } catch {}
-    //             try { (widgetEl as any).questions = payload.questions || []; } catch {}
-    //             try { widgetEl.setAttribute("job", JSON.stringify(payload.job || {})); } catch {}
-    //             try { (widgetEl as any).job = payload.job || {}; } catch {}
-
-    //             // ensure widget is visible even if stylesheet is slow to load
-    //             try {
-    //                 widgetEl.style.display = "block";
-    //                 widgetEl.style.minHeight = "240px";
-    //                 widgetEl.style.width = "100%";
-    //             } catch {}
-
-    //             if (interviewId) {
-    //             try {
-    //                 widgetEl.setAttribute("metadata", JSON.stringify({ interviewId }));
-    //                 (widgetEl as any).metadata = { interviewId };
-    //             } catch {}
-    //             }
-
-    //             // optional: dispatch an event the widget may listen to
-    //             try {
-    //             const ev = new CustomEvent("context-updated", { detail: { context: contextObj, questions: questionsArray } });
-    //             widgetEl.dispatchEvent(ev);
-    //             } catch {}
-
-    //             container.appendChild(widgetEl);
-    //             widgetRef.current = widgetEl;
-    //             setWidgetLoaded(true);
-
-    //             // small debug log
-    //             setTimeout(() => {
-    //             try {
-    //                 console.log("Widget mounted. element attributes/properties:", {
-    //                 agentIdAttr: widgetEl.getAttribute("agent-id"),
-    //                 contextAttr: widgetEl.getAttribute("context"),
-    //                 questionsAttr: widgetEl.getAttribute("questions"),
-    //                 jobAttr: widgetEl.getAttribute("job"),
-    //                 propContext: (widgetEl as any).context,
-    //                 propQuestions: (widgetEl as any).questions,
-    //                 propJob: (widgetEl as any).job,
-    //                 });
-    //             } catch (e) {
-    //                 console.warn("post-mount inspect failed", e);
-    //             }
-    //             }, 600);
-    //             return true;
-    //         } catch (err) {
-    //             console.error("createWidget error", err);
-    //             setScriptError(String(err));
-    //             return false;
-    //         }
-    //     };
-
-    //     try {
-    //     // If element already registered, try create immediately
-    //     if (customElements && customElements.get(ELEMENT_NAME)) {
-    //         setScriptStatus('ready');
-    //         const created = createWidget();
-    //         if (created) return;
-    //         // else continue to attempt script injection fallback
-    //     }
-
-    //     // Check if any existing script with known snippet is present (don't inject duplicate)
-    //     const existingScript = Array.from(document.getElementsByTagName("script")).find((s) =>
-    //         s.src && CANDIDATE_SRCS.some(srcCandidate => s.src.includes(srcCandidate.replace(/^https?:\/\//, '')))
-    //     );
-
-    //     if (existingScript) {
-    //         setScriptStatus('found');
-    //         console.log("Found existing widget script:", existingScript.src);
-    //         // wait briefly for element registration
-    //         const registered = await waitForElementRegistered(ELEMENT_NAME, 4000, 150);
-    //         if (registered) {
-    //         setScriptStatus('ready');
-    //         const ok = createWidget();
-    //         if (ok) return;
-    //         } else {
-    //         console.warn("Existing script found but element not registered after wait");
-    //         }
-    //     }
-
-    //     // Try candidate URLs in order. Stop at first successful load where element registers.
-    //     let loadedOk = false;
-    //     for (const src of CANDIDATE_SRCS) {
-    //         // check if a script with same src already present exactly
-    //         const sameScript = Array.from(document.getElementsByTagName("script")).find((s) => s.src === src);
-    //         if (sameScript) {
-    //         scriptRef.current = sameScript as HTMLScriptElement;
-    //         setScriptStatus('found');
-    //         } else {
-    //         // inject script
-    //         setScriptStatus('loading');
-    //         const script = document.createElement("script");
-    //         script.src = src;
-    //         script.async = true;
-    //         script.type = "text/javascript";
-    //         scriptRef.current = script;
-    //         const loadPromise = new Promise<void>((resolve, reject) => {
-    //             script.addEventListener("load", () => resolve(), { once: true });
-    //             script.addEventListener("error", (e) => reject(new Error(`Script load error for ${src}`)), { once: true });
-    //             // safety timeout for this script load
-    //             setTimeout(() => {
-    //             // If the script didn't fire load in 6s, treat as timeout for this src (but try next)
-    //             reject(new Error(`Timeout loading script ${src}`));
-    //             }, 6000);
-    //         });
-    //         document.body.appendChild(script);
-    //         try {
-    //             await loadPromise;
-    //             setScriptStatus('loaded');
-    //         } catch (err: any) {
-    //             // remove script element on failure
-    //             console.warn("Script load failed for", src, err);
-    //             script.remove();
-    //             scriptRef.current = null;
-    //             setScriptError(String(err?.message || err));
-    //             setScriptStatus('error');
-    //             // try next candidate
-    //             continue;
-    //         }
-    //         }
-
-    //         // After injection (or found existing), wait for the custom element to register
-    //         const registered = await waitForElementRegistered(ELEMENT_NAME, 5000, 150);
-    //         if (registered) {
-    //         setScriptStatus('ready');
-    //         const ok = createWidget();
-    //         if (ok) {
-    //             loadedOk = true;
-    //             break;
-    //         } else {
-    //             // If couldn't create despite registration, continue trying other sources (unlikely)
-    //             console.warn("Element registered but createWidget returned false; trying next source if any.");
-    //         }
-    //         } else {
-    //         // element didn't register even after script loaded — try next src
-    //         setScriptStatus('timeout');
-    //         setScriptError(`Element ${ELEMENT_NAME} not registered after script from ${scriptRef.current?.src ?? 'unknown'}`);
-    //         // continue loop
-    //         }
-    //     }
-
-    //     if (!loadedOk) {
-    //         // give final message — helpful for debugging
-    //         const msg = `Failed to load and mount widget. scriptStatus=${scriptStatus} error=${scriptError ?? 'none'}`;
-    //         console.error(msg);
-    //         setScriptError(scriptError ?? "Widget registration timeout or load failed");
-    //         setScriptStatus('error');
-    //     }
-    //     } catch (err: any) {
-    //     console.error("loadAndMountWidget top-level error", err);
-    //     setScriptError(String(err?.message || err));
-    //     setScriptStatus('error');
-    //     }
-        
-    // }
     async function loadAndMountWidget(fullSystemPrompt: string, questionsArray: QuestionItem[]) {
-    removeMountedWidgetElement();
-    setWidgetLoaded(false);
-    setScriptError(null);
-    setScriptStatus('idle');
+        removeMountedWidgetElement();
+        setWidgetLoaded(false);
+        setScriptError(null);
+        setScriptStatus('idle');
 
-    const ELEMENT_NAME = "elevenlabs-convai";
-    // Use the recommended src (simplify from candidates for stability)
-    const SCRIPT_SRC = "https://unpkg.com/@elevenlabs/convai-widget-embed";
+        const ELEMENT_NAME = "elevenlabs-convai";
+        // Use the recommended src (simplify from candidates for stability)
+        const SCRIPT_SRC = "https://unpkg.com/@elevenlabs/convai-widget-embed";
 
-    // poll helper: wait until customElements has the element or until timeout
-    const waitForElementRegistered = async (elementName: string, maxWaitMs = 5000, interval = 150) => {
-        const start = Date.now();
-        while (Date.now() - start < maxWaitMs) {
-            if (customElements && customElements.get(elementName)) {
-                return true;
+        // poll helper: wait until customElements has the element or until timeout
+        const waitForElementRegistered = async (elementName: string, maxWaitMs = 5000, interval = 150) => {
+            const start = Date.now();
+            while (Date.now() - start < maxWaitMs) {
+                if (customElements && customElements.get(elementName)) {
+                    return true;
+                }
+                await new Promise((r) => setTimeout(r, interval));
             }
-            await new Promise((r) => setTimeout(r, interval));
-        }
-        return false;
-    };
+            return false;
+        };
 
-    const createWidget = () => {
-        try {
-            // if custom element still not registered, abort
-            if (!customElements.get(ELEMENT_NAME)) {
-                console.warn("custom element not yet registered:", ELEMENT_NAME);
+        const createWidget = () => {
+            try {
+                // if custom element still not registered, abort
+                if (!customElements.get(ELEMENT_NAME)) {
+                    console.warn("custom element not yet registered:", ELEMENT_NAME);
+                    return false;
+                }
+                console.log("Creating widget element: ", customElements.get(ELEMENT_NAME));
+                removeMountedWidgetElement();
+                const container = document.getElementById("widget-container");
+                if (!container) throw new Error("widget container missing");
+
+                const widgetEl = document.createElement(ELEMENT_NAME) as HTMLElement;
+
+                // IMPORTANT: set your agent id here (required for the widget to fetch agent config and render)
+                const AGENT_ID = import.meta.env.VITE_ELEVEN_AGENT_ID; // <- replace with your actual agent id
+                widgetEl.setAttribute("agent-id", AGENT_ID);
+                try { (widgetEl as any)["agent-id"] = AGENT_ID; } catch {}
+
+                // Set system prompt override (required)
+                widgetEl.setAttribute("override-prompt", fullSystemPrompt);
+
+                // ensure widget is visible even if stylesheet is slow to load
+                try {
+                    widgetEl.style.display = "block";
+                    widgetEl.style.minHeight = "240px";
+                    widgetEl.style.width = "100%";
+                } catch {}
+
+                if (interviewId) {
+                    try {
+                        widgetEl.setAttribute("metadata", JSON.stringify({ interviewId }));
+                        (widgetEl as any).metadata = { interviewId };
+                    } catch {}
+                }
+
+                container.appendChild(widgetEl);
+                widgetRef.current = widgetEl;
+                setWidgetLoaded(true);
+
+                // small debug log (updated to log overrides)
+                setTimeout(() => {
+                    try {
+                            console.log("Widget mounted. element attributes/properties:", {
+                            agentIdAttr: widgetEl.getAttribute("agent-id"),
+                            overridePromptAttr: widgetEl.getAttribute("override-prompt"),
+                        });
+                    } catch (e) {
+                        console.warn("post-mount inspect failed", e);
+                    }
+                }, 600);
+
+                widgetEl.addEventListener('user_transcript', (e) => {
+                    const event = e as CustomEvent;
+                    const detail = event.detail;
+                    if (detail?.user_transcript) {
+                        setTranscript((prev) => [...prev, { role: 'user', text: detail.user_transcript, questionId: detail.question_id || null }]);
+                        // Optionally send to backend via fetch to persist
+                    }
+                    console.log('User transcript:', detail);
+                });
+
+                // Listen for agent responses (fired with agent's message)
+                widgetEl.addEventListener('agent_response', (e) => {
+                    const event = e as CustomEvent;
+                    const detail = event.detail;
+                    if (detail?.text) {
+                        setTranscript((prev) => [...prev, { role: 'agent', text: detail.text, questionId: detail.question_id || null }]);
+                    }
+                    console.log('Agent response:', detail);
+                });
+
+                return true;
+            } catch (err) {
+                console.error("createWidget error", err);
+                setScriptError(String(err));
                 return false;
             }
-            console.log("Creating widget element: ", customElements.get(ELEMENT_NAME));
-            removeMountedWidgetElement();
-            const container = document.getElementById("widget-container");
-            if (!container) throw new Error("widget container missing");
+        };
 
-            const widgetEl = document.createElement(ELEMENT_NAME) as HTMLElement;
-
-            // IMPORTANT: set your agent id here (required for the widget to fetch agent config and render)
-            const AGENT_ID = import.meta.env.VITE_ELEVEN_AGENT_ID; // <- replace with your actual agent id
-            widgetEl.setAttribute("agent-id", AGENT_ID);
-            try { (widgetEl as any)["agent-id"] = AGENT_ID; } catch {}
-
-            // Set system prompt override (required)
-            widgetEl.setAttribute("override-prompt", fullSystemPrompt);
-
-            // ensure widget is visible even if stylesheet is slow to load
-            try {
-                widgetEl.style.display = "block";
-                widgetEl.style.minHeight = "240px";
-                widgetEl.style.width = "100%";
-            } catch {}
-
-            if (interviewId) {
-                try {
-                    widgetEl.setAttribute("metadata", JSON.stringify({ interviewId }));
-                    (widgetEl as any).metadata = { interviewId };
-                } catch {}
+        try {
+            // If element already registered, try create immediately
+            if (customElements && customElements.get(ELEMENT_NAME)) {
+                setScriptStatus('ready');
+                const created = createWidget();
+                if (created) return;
             }
 
-            container.appendChild(widgetEl);
-            widgetRef.current = widgetEl;
-            setWidgetLoaded(true);
+            // Check if script already present
+            const existingScript = Array.from(document.getElementsByTagName("script")).find((s) => s.src === SCRIPT_SRC);
 
-            // small debug log (updated to log overrides)
-            setTimeout(() => {
-                try {
-                    console.log("Widget mounted. element attributes/properties:", {
-                        agentIdAttr: widgetEl.getAttribute("agent-id"),
-                        overridePromptAttr: widgetEl.getAttribute("override-prompt"),
-                    });
-                } catch (e) {
-                    console.warn("post-mount inspect failed", e);
+            if (existingScript) {
+                setScriptStatus('found');
+                console.log("Found existing widget script:", existingScript.src);
+                const registered = await waitForElementRegistered(ELEMENT_NAME, 4000, 150);
+                if (registered) {
+                    setScriptStatus('ready');
+                    const ok = createWidget();
+                    if (ok) return;
+                } else {
+                    console.warn("Existing script found but element not registered after wait");
                 }
-            }, 600);
-            return true;
-        } catch (err) {
-            console.error("createWidget error", err);
-            setScriptError(String(err));
-            return false;
-        }
-    };
+            }
 
-    try {
-        // If element already registered, try create immediately
-        if (customElements && customElements.get(ELEMENT_NAME)) {
-            setScriptStatus('ready');
-            const created = createWidget();
-            if (created) return;
-        }
+            // Inject script if not found
+            setScriptStatus('loading');
+            const script = document.createElement("script");
+            script.src = SCRIPT_SRC;
+            script.async = true;
+            script.type = "text/javascript";
+            scriptRef.current = script;
+            const loadPromise = new Promise<void>((resolve, reject) => {
+                script.addEventListener("load", () => resolve(), { once: true });
+                script.addEventListener("error", (e) => reject(new Error(`Script load error for ${SCRIPT_SRC}`)), { once: true });
+                setTimeout(() => reject(new Error(`Timeout loading script ${SCRIPT_SRC}`)), 6000);
+            });
+            document.body.appendChild(script);
+            try {
+                await loadPromise;
+                setScriptStatus('loaded');
+            } catch (err: any) {
+                console.warn("Script load failed for", SCRIPT_SRC, err);
+                script.remove();
+                scriptRef.current = null;
+                setScriptError(String(err?.message || err));
+                setScriptStatus('error');
+                return; // No more candidates, so exit
+            }
 
-        // Check if script already present
-        const existingScript = Array.from(document.getElementsByTagName("script")).find((s) => s.src === SCRIPT_SRC);
-
-        if (existingScript) {
-            setScriptStatus('found');
-            console.log("Found existing widget script:", existingScript.src);
-            const registered = await waitForElementRegistered(ELEMENT_NAME, 4000, 150);
+            // After load, wait for registration
+            const registered = await waitForElementRegistered(ELEMENT_NAME, 5000, 150);
             if (registered) {
                 setScriptStatus('ready');
                 const ok = createWidget();
                 if (ok) return;
             } else {
-                console.warn("Existing script found but element not registered after wait");
+                setScriptStatus('timeout');
+                setScriptError(`Element ${ELEMENT_NAME} not registered after script load`);
             }
-        }
-
-        // Inject script if not found
-        setScriptStatus('loading');
-        const script = document.createElement("script");
-        script.src = SCRIPT_SRC;
-        script.async = true;
-        script.type = "text/javascript";
-        scriptRef.current = script;
-        const loadPromise = new Promise<void>((resolve, reject) => {
-            script.addEventListener("load", () => resolve(), { once: true });
-            script.addEventListener("error", (e) => reject(new Error(`Script load error for ${SCRIPT_SRC}`)), { once: true });
-            setTimeout(() => reject(new Error(`Timeout loading script ${SCRIPT_SRC}`)), 6000);
-        });
-        document.body.appendChild(script);
-        try {
-            await loadPromise;
-            setScriptStatus('loaded');
         } catch (err: any) {
-            console.warn("Script load failed for", SCRIPT_SRC, err);
-            script.remove();
-            scriptRef.current = null;
+            console.error("loadAndMountWidget top-level error", err);
             setScriptError(String(err?.message || err));
             setScriptStatus('error');
-            return; // No more candidates, so exit
         }
-
-        // After load, wait for registration
-        const registered = await waitForElementRegistered(ELEMENT_NAME, 5000, 150);
-        if (registered) {
-            setScriptStatus('ready');
-            const ok = createWidget();
-            if (ok) return;
-        } else {
-            setScriptStatus('timeout');
-            setScriptError(`Element ${ELEMENT_NAME} not registered after script load`);
-        }
-    } catch (err: any) {
-        console.error("loadAndMountWidget top-level error", err);
-        setScriptError(String(err?.message || err));
-        setScriptStatus('error');
     }
-}
     
     // Primary "Start interview" orchestration
     const startInterview = async () => {
@@ -670,7 +472,7 @@ export default function InterviewSummary(): JSX.Element {
                     <div id="widget-container" className="mt-8 min-h-[200px]" />
 
                     {/* DEBUG PANEL */}
-                    <div className="mt-3 text-sm text-gray-400">
+                    {/* <div className="mt-3 text-sm text-gray-400">
                         <div>Widget script status: <span className="text-emerald-300 ml-2">{scriptStatus}</span></div>
                         {scriptRef.current?.src && <div>Script src: <code className="text-xs">{scriptRef.current.src}</code></div>}
                         {scriptError && <div className="mt-1 text-red-400">Error: {scriptError}</div>}
@@ -682,7 +484,7 @@ export default function InterviewSummary(): JSX.Element {
                         The agent should now ask questions from your selected dataset. To persist transcripts you must either
                         configure the Convai/ElevenLabs webhook to POST transcripts to your server or capture/upload audio + call STT endpoints.
                         </div>
-                    )}
+                    )} */}
                 </div>
             </div>
         </main>

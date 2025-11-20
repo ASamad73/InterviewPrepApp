@@ -26,3 +26,4 @@ dist-ssr
 
 **/back.env
 **/.env
+**/refine_qas.js
