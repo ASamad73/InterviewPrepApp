@@ -39,7 +39,7 @@
 // export default Header
 // src/components/layout/Header.tsx
 import React from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   SignedIn,
   SignedOut,
@@ -50,6 +50,7 @@ import {
 } from '@clerk/clerk-react'
 
 const Header: React.FC = () => {
+  const navigate = useNavigate()
   return (
     <header className="sticky top-0 z-20 border-b border-white/10 bg-[#0b0b0b]/90 backdrop-blur">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex items-center">
@@ -68,7 +69,11 @@ const Header: React.FC = () => {
 
         <div className="flex flex-1 items-center justify-end gap-3">
           <SignedIn>
-            <UserButton />
+            <UserButton>
+              <UserButton.MenuItems>
+                <UserButton.Action label="Edit Profile" labelIcon={<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>} onClick={() => navigate('/profile')} />
+              </UserButton.MenuItems>
+            </UserButton>
             {/* Optionally show a sign out button somewhere */}
             <div className="hidden">
               <SignOutButton />

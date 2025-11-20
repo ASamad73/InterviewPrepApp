@@ -55,6 +55,8 @@ import Dashboard from './src/pages/Dashboard'
 import CreateInterview from './src/pages/CreateInterview'
 import Interview from './src/pages/Interview'
 import InterviewSummary from './src/pages/InterviewSummary'
+import Profile from './src/pages/Profile'
+import clerkAppearance from './src/lib/clerkAppearance'
 
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY
 
@@ -68,7 +70,7 @@ if (!root) throw new Error('Root element not found')
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
     <BrowserRouter>
-      <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
+      <ClerkProvider publishableKey={PUBLISHABLE_KEY} appearance={clerkAppearance}>
         <App>
           <Routes>
             <Route path="/" element={<Home />} />
@@ -80,6 +82,7 @@ ReactDOM.createRoot(root).render(
             <Route path="/create-interview" element={<CreateInterview />} />
             <Route path="/interview/:id" element={<Interview />} />
             <Route path="/interview-summary" element={<InterviewSummary />} />
+            <Route path="/profile" element={<Profile />} />
           </Routes>
         </App>
       </ClerkProvider>

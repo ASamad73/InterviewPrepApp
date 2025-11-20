@@ -9,6 +9,7 @@
 // }
 // src/pages/Home.tsx
 import React, { useEffect, useState } from 'react'
+import { Navigate } from 'react-router-dom'
 import Hero from '../components/sections/Hero'
 import { useAuth } from '@clerk/clerk-react'
 
@@ -37,6 +38,14 @@ export default function Home(): JSX.Element {
   const [questions, setQuestions] = useState<Question[]>([])
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
+
+  if (!isLoaded) {
+    return <div className="min-h-screen bg-[#0c0c0c]" />
+  }
+
+  if (isSignedIn) {
+    return <Navigate to="/dashboard" replace />
+  }
 
   // backend base URL - set in frontend .env: VITE_API_URL=http://localhost:8000
   const API_URL = import.meta.env.VITE_API_URL || ''

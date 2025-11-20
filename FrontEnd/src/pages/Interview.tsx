@@ -36,7 +36,14 @@ export default function Interview() {
   useEffect(() => {
     if (!id) return
     updateInterview(id, { status: ended ? 'completed' : 'in-progress' })
-  }, [id, ended])
+
+    if (ended) {
+      const timer = setTimeout(() => {
+        navigate('/dashboard')
+      }, 1500)
+      return () => clearTimeout(timer)
+    }
+  }, [id, ended, navigate])
 
   const waveformRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
