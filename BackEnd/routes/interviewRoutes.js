@@ -176,4 +176,35 @@ router.get('/:id/questions', async (req, res) => {
 //   }
 // });
 
+// router.get('/user/:userId', async (req, res) => {
+//   try {
+//     const interviews = await Interview.find({ createdBy: req.params.userId })
+//       .sort({ createdAt: -1 })
+//       .limit(3)
+    
+//     // Return empty array instead of 404
+//     res.json(interviews || [])
+//   } catch (error) {
+//     console.error('Error fetching user interviews:', error)
+//     res.status(500).json({ error: error.message })
+//   }
+// })
+
+// // Get interview statistics for a user
+// router.get('/stats/:userId', async (req, res) => {
+//   try {
+//     const interviews = await Interview.find({ createdBy: req.params.userId })
+    
+//     const completed = interviews.filter(i => i.status === 'completed').length
+    
+//     // Always return stats object, even if empty
+//     res.json({
+//       completed: completed
+//     })
+//   } catch (error) {
+//     console.error('Error fetching interview stats:', error)
+//     res.status(500).json({ error: error.message })
+//   }
+// })
+
 export default router
