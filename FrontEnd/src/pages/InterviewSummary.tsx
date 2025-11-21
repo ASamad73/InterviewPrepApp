@@ -27,6 +27,7 @@ export default function InterviewSummary(): JSX.Element {
     const [description, setDescription] = useState<string>(state.description ?? "");
 
     const [questions, setQuestions] = useState<QuestionItem[]>([]);
+    const [answersMap, setAnswersMap] = useState<Record<string, string>>({});
     const [transcript, setTranscript] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [creating, setCreating] = useState(false);
@@ -47,7 +48,7 @@ export default function InterviewSummary(): JSX.Element {
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (isLoaded && isSignedIn && getToken) {
         try {
-            const token = await getToken();
+            const token = await getToken({ template: "interview-backend" });
             if (token) headers["Authorization"] = `Bearer ${token}`;
         } catch (err) {
             console.warn("getToken failed", err);
@@ -57,7 +58,9 @@ export default function InterviewSummary(): JSX.Element {
     }
 
     async function ensureInterviewExists() {
+        console.log("Ensuring interview exists, current id:", interviewId);
         if (interviewId) return interviewId;
+
         setCreating(true);
         setError(null);
         try {
@@ -78,7 +81,7 @@ export default function InterviewSummary(): JSX.Element {
                 const msg = body?.message || `Server returned ${res.status}`;
                 throw new Error(msg);
             }
-            const id = body?.id ?? body?.interview?._id ?? body?.interview?.id;
+            const id = body?.interviewId || body?.id || body?.interview?._id;
             if (!id) throw new Error("Server did not return interview id");
             setInterviewId(String(id));
             return String(id);
@@ -94,17 +97,26 @@ export default function InterviewSummary(): JSX.Element {
     async function fetchSelectedQuestions(id: string) {
         setLoading(true);
         setError(null);
+        console.log("Fetching selected questions for interview id:", id);
         try {
             const headers = await getAuthHeaders();
             const res = await fetch(`${API}/api/interviews/${id}/questions`, { method: "GET", headers });
             const body = await res.json().catch(() => null);
+            
             if (!res.ok) {
                 throw new Error(body?.message || `Failed to fetch questions (${res.status})`);
             }
             if (!body || !Array.isArray(body.questions)) {
                 throw new Error("Invalid response for questions");
             }
-            setQuestions(body.questions);
+
+            const receivedAnswers = body.answersMap ?? {};
+            const normalized: Record<string, string> = {};
+            for (const k of Object.keys(receivedAnswers)) {
+                normalized[String(k)] = String(receivedAnswers[k] ?? '');
+            }
+            setAnswersMap(normalized);
+
             return body.questions;
         } catch (err: any) {
             console.error("fetchSelectedQuestions error", err);
@@ -147,10 +159,10 @@ export default function InterviewSummary(): JSX.Element {
             5) Skipping — If the candidate says “skip” or “pass”, acknowledge briefly (“Okay, skipping that question.”) and move on. 
             Allow returning to a skipped question only if the candidate explicitly asks to return after the remaining questions are completed.
             
-            6) Webhook / persistence — If webhook/event hooks are configured for the embed, emit an event at the end of each question 
-            turn with the candidate’s transcript and the question id. Also emit a final “interview.finished” event when done. 
-            (This is informational. The embed platform will send webhooks — ensure your server endpoint accepts them.)
-
+            6) Persistence — After receiving the full answer to each question (including any clarification or skip, and handling any interruptions by 
+            combining partial utterances into a complete response), call the 'save_question_transcript' tool with parameters: question_id (the ID from the list) 
+            and transcript (the candidate's full spoken answer as a single string).
+            
             7) Ending the interview — After receiving and acknowledging the answer to the last question (including any clarification), 
             immediately say exactly: “Interview complete. Thank you for your time.” Do not ask additional questions or continue the conversation. 
             End the session.
@@ -158,9 +170,10 @@ export default function InterviewSummary(): JSX.Element {
             IMPORTANT: Do not prompt for job info, role summary, or anything else outside the provided questions.
             `;
             
-        // 6) End command — If the candidate says “end interview”, “stop interview”, or “finish”, immediately stop the interview flow 
-        // and say exactly: “Interview complete. Thank you for your time.” Do not ask additional questions.
-        console.log('Building widget with embedded prompt:', { fullSystemPrompt, questionsList });
+            console.log('Building widget with embedded prompt:', { fullSystemPrompt, questionsList });
+        // 6) Webhook / persistence — If webhook/event hooks are configured for the embed, emit an event at the end of each question 
+        // turn with the candidate’s transcript and the question id. Also emit a final “interview.finished” event when done. 
+        // (This is informational. The embed platform will send webhooks — ensure your server endpoint accepts them.)
         // const stopPhrases = ['end interview', 'stop interview', 'finish', 'end']; //end added
 
         // The widget expects a `context` object — include your instructions and the question list there.
