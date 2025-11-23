@@ -9,6 +9,79 @@ import { selectQuestions } from "../lib/selectQuestions.js";
 
 const router = express.Router()
 
+
+// Added by Haider.
+
+// Get all interviews for the authenticated user
+router.get('/user/interviews', async (req, res) => {
+  try {
+    // === AUTH ===
+    const authHeader = req.headers.authorization || req.headers.Authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ message: 'Unauthorized - No token' });
+    }
+    const token = authHeader.split('Bearer ')[1].trim();
+    const verified = await clerkClient.verifyToken(token);
+    const owner = verified.sub;
+
+    console.log('Fetching interviews for user:', owner);
+
+    // Fetch interviews for this user
+    const interviews = await Interview.find({ owner })
+      .sort({ date: -1 })
+      .lean();
+
+    console.log(`Found ${interviews.length} interviews for user ${owner}`);
+
+    return res.json({
+      ok: true,
+      interviews: interviews.map(interview => ({
+        id: interview.interviewId,
+        title: interview.parameters?.jobTitle || 'Untitled Interview',
+        company: interview.parameters?.company || '',
+        date: interview.date,
+        status: interview.status
+      }))
+    });
+
+  } catch (error) {
+    console.error('Error fetching user interviews:', error);
+    return res.status(500).json({ ok: false, message: 'Server error', error: error.message });
+  }
+});
+
+// Get user statistics - ONLY TOTAL COUNT
+router.get('/user/stats', async (req, res) => {
+  try {
+    // === AUTH ===
+    const authHeader = req.headers.authorization || req.headers.Authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ message: 'Unauthorized - No token' });
+    }
+    const token = authHeader.split('Bearer ')[1].trim();
+    const verified = await clerkClient.verifyToken(token);
+    const owner = verified.sub;
+
+    // Fetch interviews for this user
+    const interviews = await Interview.find({ owner }).lean();
+
+    // ONLY TOTAL COUNT - nothing else
+    const stats = {
+      total: interviews.length
+    };
+
+    return res.json({
+      ok: true,
+      stats
+    });
+
+  } catch (error) {
+    console.error('Error fetching user stats:', error);
+    return res.status(500).json({ ok: false, message: 'Server error', error: error.message });
+  }
+});
+
+
 router.post('/import-qas', async (req, res) => {
   try {
     // Path to paraphrased_qas.json in BackEnd/
@@ -303,5 +376,6 @@ router.get('/:id/questions', async (req, res) => {
     return res.status(500).json({ ok: false, error: String(err) });
   }
 });
+
 
 export default router
