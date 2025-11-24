@@ -99,36 +99,10 @@ router.post('/save-parameters', async (req, res) => {
       return res.status(400).json({ ok: false, message: 'Missing required fields' });
     }
 
-    const num_questions = 10;
+    // const num_questions = 10;
+    const num_questions = 2;
     const selectedIds = await selectQuestions(jobTitle, jobDescription, num_questions);
 
-    const ids = ['56150402','55266910']
-    const byNum = await Question.find({ question_id: { $in: ids.map(i=> Number(i)) } }).lean()
-    const byStr = await Question.find({ question_id: { $in: ids } }).lean()
-    console.log('byNum', byNum.map(d=>d.question_id))
-    console.log('byStr', byStr.map(d=>d.question_id))
-
-    // Convert to String once and reuse everywhere
-    // const selectedIdsStr = selectedIds.map(id => String(id));
-    // console.log('Selected IDs as String:', selectedIdsStr);
-
-    // const found = await Question.find({ question_id: { $in: selectedIdsStr } }).select('question_id question_title').lean();
-    // console.log('found matching docs:', found.map(f => f.question_id));
-
-    // // Fetch questions using String IDs
-    // const questionDocs = await Question.find({
-    //   question_id: { $in: selectedIdsStr }
-    // }).lean();
-
-    // console.log(`Fetched ${questionDocs.length} questions from DB`);
-
-    // const idToDoc = new Map(questionDocs.map(d => [d.question_id, d])); // d.question_id is String
-
-    // const ordered = selectedIdsStr
-    //   .map(id => idToDoc.get(id))
-    //   .filter(Boolean);
-
-    // console.log('Ordered questions count:', ordered.length);
     const selectedIdsRaw = selectedIds; // may be numbers or strings
     console.log('Selected IDs (raw):', selectedIdsRaw);
 
@@ -165,16 +139,16 @@ router.post('/save-parameters', async (req, res) => {
     console.log(`Fetched ${questionDocs.length} questions from DB (robust query)`);
 
     // Map found IDs for quick check
-    const foundIdsSet = new Set(questionDocs.map((d) => String(d.question_id)));
+    // const foundIdsSet = new Set(questionDocs.map((d) => String(d.question_id)));
 
-    // Detect which selected IDs were not found (as string)
-    const missing = selectedIdsStr.filter((sid) => !foundIdsSet.has(String(sid)));
-    if (missing.length) {
-      console.warn('selectQuestions: some selected ids were not found in DB. missing count:', missing.length);
-      console.warn('Missing IDs (string form):', missing.slice(0,50));
-    } else {
-      console.log('selectQuestions: all selected ids were found in DB (string check).');
-    }
+    // // Detect which selected IDs were not found (as string)
+    // const missing = selectedIdsStr.filter((sid) => !foundIdsSet.has(String(sid)));
+    // if (missing.length) {
+    //   console.warn('selectQuestions: some selected ids were not found in DB. missing count:', missing.length);
+    //   console.warn('Missing IDs (string form):', missing.slice(0,50));
+    // } else {
+    //   console.log('selectQuestions: all selected ids were found in DB (string check).');
+    // }
 
     // Build ordered array (preserving original order of selectedIds)
     const idToDoc = new Map(questionDocs.map((d) => [String(d.question_id), d]));
@@ -185,18 +159,18 @@ router.post('/save-parameters', async (req, res) => {
 
     console.log('Ordered questions count:', ordered.length);
 
-    // If ordered is less than requested, optionally append fallback top-ranked docs
-    if (ordered.length < num_questions) {
-      const need = num_questions - ordered.length;
-      // Exclude already included question_id values
-      const excludeSet = new Set(ordered.map(q => String(q.question_id)));
-      const fallback = await Question.find({
-        question_id: { $nin: Array.from(excludeSet) }
-      }).sort({ rank_value: -1 }).limit(need).lean();
+    // // If ordered is less than requested, optionally append fallback top-ranked docs
+    // if (ordered.length < num_questions) {
+    //   const need = num_questions - ordered.length;
+    //   // Exclude already included question_id values
+    //   const excludeSet = new Set(ordered.map(q => String(q.question_id)));
+    //   const fallback = await Question.find({
+    //     question_id: { $nin: Array.from(excludeSet) }
+    //   }).sort({ rank_value: -1 }).limit(need).lean();
 
-      console.log(`selectQuestions: added fallback docs count: ${fallback.length}`);
-      ordered.push(...fallback);
-    }
+    //   console.log(`selectQuestions: added fallback docs count: ${fallback.length}`);
+    //   ordered.push(...fallback);
+    // }
     const preFilledAnswers = ordered.map(q => ({
       question_id: q.question_id,                    // Already String
       question_title: q.question_title ?? '',

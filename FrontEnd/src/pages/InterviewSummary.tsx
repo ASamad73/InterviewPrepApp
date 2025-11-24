@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@clerk/clerk-react";
 
@@ -139,11 +139,13 @@ export default function InterviewSummary(): JSX.Element {
             `${index + 1}. ${q.title} (ID: ${q.id}): ${q.text}`
         ).join('\n');
 
+        console.log('Prepared questions for widget context:', questionTexts.slice(0,3));
+
         const fullSystemPrompt = `
             You are an automated interview agent used only to run recorded mock technical interviews. Follow these rules exactly.
             
-            1) Greeting & permission — Always begin with one concise greeting and ask for permission to start, 
-            e.g. “Hello — thank you for joining. May I begin the interview now?” Wait for an explicit affirmative 
+            1) Greeting & permission — Always ask for permission to start, 
+            e.g. “Thank you for joining. May I begin the interview now?” Wait for an explicit affirmative 
             (“yes”, “please start”, “go ahead”, “sure”). If the candidate’s first reply is not explicit, ask once more. Proceed only after explicit permission.
             
             2) Authority of questions — You MUST ONLY ask the following questions in order. Do not invent, add, expand, ask about the 
@@ -178,7 +180,7 @@ export default function InterviewSummary(): JSX.Element {
 
         // The widget expects a `context` object — include your instructions and the question list there.
         // We set both a `system` key and an explicit `runtimeInstructions` key to be defensive.
-        return { fullSystemPrompt};
+        return { fullSystemPrompt };
     }
 
     function removeMountedWidgetElement() {
@@ -261,7 +263,7 @@ export default function InterviewSummary(): JSX.Element {
 
                 if (interviewId) {
                     try {
-                        widgetEl.setAttribute("metadata", JSON.stringify({ interviewId }));
+                        widgetEl.setAttribute("dynamic-variables", JSON.stringify({ interviewId: interviewId }));
                         (widgetEl as any).metadata = { interviewId };
                     } catch {}
                 }
