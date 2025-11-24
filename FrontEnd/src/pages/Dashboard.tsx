@@ -132,12 +132,12 @@ export default function Dashboard() {
         {!hasItems ? (
           <div className="rounded-lg border border-white/10 bg-[#0e0e0e] p-8 text-center">
             <p className="text-gray-300">No interviews yet. Create your first interview to get started.</p>
-            <Link
+            {/* <Link
               to="/create-interview"
               className="mt-6 inline-flex rounded-md bg-[#3ecf8e] px-4 py-2 text-sm font-semibold text-black hover:bg-[#36be81]"
             >
               Create Interview
-            </Link>
+            </Link> */}
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
