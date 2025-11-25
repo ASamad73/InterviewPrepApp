@@ -38,6 +38,9 @@ export default function InterviewSummary(): JSX.Element {
     const [scriptStatus, setScriptStatus] = useState<'idle'|'found'|'loading'|'loaded'|'error'|'ready'|'timeout'>('idle');
     const [scriptError, setScriptError] = useState<string | null>(null);
 
+    const [overallScore, setOverallScore] = useState<number | null>(null);
+    const [scoreLoading, setScoreLoading] = useState(false);
+
 
     const scriptRef = useRef<HTMLScriptElement | null>(null);
     const widgetRef = useRef<HTMLElement | null>(null);
@@ -428,6 +431,61 @@ export default function InterviewSummary(): JSX.Element {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    async function fetchOverallScoreOnce(interviewId: string) {
+        try {
+            const headers: Record<string, string> = { "Content-Type": "application/json" };
+
+            if (getToken) {
+                const token = await getToken({ template: "interview-backend" }).catch(() => null);
+                if (token) headers.Authorization = `Bearer ${token}`;
+            }
+
+            const res = await fetch(`${API}/api/webhooks/transcripts/${interviewId}`, {
+                method: "GET",
+                headers,
+            });
+
+            const body = await res.json().catch(() => null);
+
+            if (!res.ok) return null;
+
+            return body?.transcript?.overallScore ?? null;
+        } catch (err) {
+            console.error("polling score error:", err);
+            return null;
+        }
+    }
+
+    useEffect(() => {
+        if (!interviewId) return;
+
+        let intervalId: ReturnType<typeof setInterval>; 
+
+        async function startPolling() {
+            intervalId = setInterval(async () => {
+            let score: number | null = null;
+            if (interviewId){
+                score = await fetchOverallScoreOnce(interviewId);
+            }
+
+            if (score !== null) {
+                setOverallScore(score);
+                setScoreLoading(false);
+                clearInterval(intervalId); // stop polling once ready
+            }
+            }, 3000); // poll every 3 seconds
+        }
+
+        startPolling();
+
+        // cleanup
+        return () => {
+            if (intervalId) clearInterval(intervalId);
+        };
+    }, [interviewId]);
+
+
+
     return (
         <main className="min-h-[calc(100vh-4rem)] bg-[#0c0c0c] px-6 py-10">
             <div className="mx-auto max-w-2xl">
@@ -467,6 +525,16 @@ export default function InterviewSummary(): JSX.Element {
                     >
                         End Interview
                     </button> */}
+
+                    <div className="mt-4 p-3 bg-gray-800 rounded-md text-white">
+                        <div className="text-sm font-semibold">Overall Score</div>
+
+                        {scoreLoading ? (
+                            <div className="text-gray-400 text-sm">Waiting for score…</div>
+                        ) : (
+                            <div className="text-lg font-bold">{overallScore}</div>
+                        )}
+                    </div>
 
                     {widgetLoaded && (
                         <button

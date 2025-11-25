@@ -295,8 +295,6 @@ router.post("/post-call-transcript", verifyWebhook, async (req, res) => {
       return res.status(404).json({ ok: false, message: "Interview not found" });
     } 
 
-    // console.log("Selecting Questions")
-
     const ids = (Array.isArray(interview.selectedQuestions) 
       ? interview.selectedQuestions 
       : []
@@ -308,48 +306,12 @@ router.post("/post-call-transcript", verifyWebhook, async (req, res) => {
       return res.json({ ok: false, message: "No selected questions in interview to parse against" });
     }
 
-    // const docs = await Question.find({
-    //   question_id: { $in: ids }  
-    // }).lean();
-
-    // console.log(`Found ${docs.length} question docs`);
-
-    // const idToDoc = new Map(docs.map(d => [d.question_id, d]));
-
-    // const ordered = ids.map(id => {
-    //   const doc = idToDoc.get(id);
-    //   if (!doc) return null;
-    //   return {
-    //     question_id: doc.question_id,
-    //     question_title: doc.question_title || '',
-    //     question_text: doc.question_text || '',
-    //   };
-    // }).filter(Boolean);
-
-    // console.log(`QUESTIONS ARE: ${ordered.slice(0,2).map(q => q.question_text).join(", ")}`);
-
     const answersArray = Array.isArray(interview.answers) ? interview.answers : [];
     console.log("Answers array:", answersArray.slice(0,2));
     if (answersArray.length === 0) {
       console.log("No answers found in interview");
     } 
-    // else {
-    //   // Build a map: question_id (string) -> answer object
-    //   const answersById = new Map();
-    //   for (const a of answersArray) {
-    //     // normalize key to string
-    //     const qid = a && (a.question_id ?? a.questionId ?? a.id) ? String(a.question_id ?? a.questionId ?? a.id) : null;
-    //     if (!qid) continue;
-    //     answersById.set(qid, {
-    //       question_id: qid,
-    //       question_title: a.question_title ?? a.questionTitle ?? "",
-    //       question_text: a.question_text ?? a.questionText ?? "",
-    //       answer_text: a.answer_text ?? a.answerText ?? "",
-    //       meta: { createdAt: a.createdAt ?? null }
-    //     });
-    //   }
-    //   // console.log("answersById keys:", Array.from(answersById.keys()));
-    // }
+    
     const idToDoc = new Map(
       answersArray.map(a => [String(a.question_id), {
         question_id: String(a.question_id),
@@ -360,11 +322,9 @@ router.post("/post-call-transcript", verifyWebhook, async (req, res) => {
     );
 
     let ordered = [];
-    // const sel = Array.isArray(interview.selectedQuestions) ? interview.selectedQuestions.map(String) : [];
     if (ids.length) {
       ordered = ids.map(id => idToDoc.get(String(id))).filter(Boolean);
     } else {
-      // fallback to answersArray order
       ordered = answersArray.map(a => idToDoc.get(String(a.question_id))).filter(Boolean);
     }
 
@@ -382,13 +342,6 @@ router.post("/post-call-transcript", verifyWebhook, async (req, res) => {
 
     const tdoc = await ensureTranscriptDoc(interviewId, payload);
 
-    // tdoc.fullTranscript = transcriptArr.map((m) => ({
-    //   role: (m.role || (m.speaker ? m.speaker.toLowerCase() : "user")),
-    //   text: (m.text || m.content || m.message || "").toString(),
-    //   timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
-    //   meta: m.meta || m
-    // }));
-    // SANITIZE & MAP TRANSCRIPT
     const cleanedTranscript = transcriptArr
       .map((m, index) => {
         const text =
@@ -403,7 +356,7 @@ router.post("/post-call-transcript", verifyWebhook, async (req, res) => {
             "raw:",
             m
           );
-          return null; // skip this entry
+          return null; 
         }
 
         return {
@@ -413,20 +366,17 @@ router.post("/post-call-transcript", verifyWebhook, async (req, res) => {
           meta: m.meta || m
         };
       })
-    .filter(Boolean); // remove nulls
+    .filter(Boolean); 
 
-    // Assign
     tdoc.fullTranscript = cleanedTranscript;
     console.log("ABOUT TO SAVE TDOC with transcript:", tdoc.fullTranscript);
 
     tdoc.providerPayload = payload;
     tdoc.status = "finalized";
-    await tdoc.save();
+    // await tdoc.save();
 
     let questionHints = [];
     if (Array.isArray(ids) && ids.length) {
-      // const qdocs = await Question.find({ question_id: { $in: ids.map(String) } }).lean();
-      // questionHints = qdocs.map(q => ({ id: String(q.question_id), text: (q.question_text || q.question_title || "").slice(0, 300) }));
       questionHints = ordered.map(q => ({ id: String(q.question_id), text: (q.question_text || q.question_title || '').slice(0, 300) }));
     }
 
@@ -448,11 +398,53 @@ router.post("/post-call-transcript", verifyWebhook, async (req, res) => {
       console.log(it.question_id, it.score.overall_score, it.score.missed_points);
     }
 
+    if(tdoc && scoringResult.aggregateOverall != null) {
+      tdoc.overallScore = scoringResult.aggregateOverall;
+      
+      for (const item of scoringResult.items) {
+        const pq = tdoc.perQuestion.find(q => String(q.question_id) === String(item.question_id));
+        if (pq) {
+          pq.score = item.score;
+        }
+      }
+
+      await tdoc.save();
+      console.log("Saved scoring into transcript.");
+    }
+
     console.log("SUCCESS")
 
     return res.status(200).json({ ok: true, message: "Full transcript saved", parsedCount: parsed.length });
   } catch (err) {
     console.error("post-call-transcript webhook error:", err);
+    return res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+router.get("/transcripts/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!id) return res.status(400).json({ ok: false, message: "Missing id param" });
+
+    // Try by interviewId (string) first, then fallback to _id
+    let tdoc = await Transcript.findOne({ interviewId: id }).lean();
+    if (!tdoc) {
+      // if id looks like ObjectId fallback
+      try {
+        tdoc = await Transcript.findById(id).lean();
+      } catch (e) {
+        // ignore cast error
+      }
+    }
+
+    if (!tdoc) return res.status(404).json({ ok: false, message: "Transcript not found" });
+
+    // Optionally filter or redact providerPayload if large:
+    // delete tdoc.providerPayload;
+
+    return res.json({ ok: true, transcript: tdoc });
+  } catch (err) {
+    console.error("GET /transcripts/:id error", err);
     return res.status(500).json({ ok: false, error: String(err) });
   }
 });

@@ -172,7 +172,7 @@ router.post('/save-parameters', async (req, res) => {
     }
 
     // const num_questions = 10;
-    const num_questions = 2;
+    const num_questions = 1;
     const selectedIds = await selectQuestions(jobTitle, jobDescription, num_questions);
 
     const selectedIdsRaw = selectedIds; // may be numbers or strings

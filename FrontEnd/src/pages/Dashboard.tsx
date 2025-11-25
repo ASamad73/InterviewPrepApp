@@ -161,7 +161,7 @@ export default function Dashboard() {
           </div>
         )}
       </div>
-      <div className="grid gap-4">
+      {/* <div className="grid gap-4">
         {questions.slice(0, 10).map((q) => (
           <article key={q.question_id} className="p-4 bg-[#0e0e0e] rounded border border-white/6">
             <p>{q.question_title}</p>
@@ -169,7 +169,7 @@ export default function Dashboard() {
           </article>
         ))}
         {questions.length > 10 && <p className="text-sm text-gray-500 mt-3">Showing first 10 items for preview</p>}
-    </div>
+    </div> */}
     </main>
   )
 }
