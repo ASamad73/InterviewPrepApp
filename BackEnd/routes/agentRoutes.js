@@ -424,26 +424,21 @@ router.post("/post-call-transcript", verifyWebhook, async (req, res) => {
 router.get("/transcripts/:id", async (req, res) => {
   try {
     const id = req.params.id;
-    console.log("Fetching transcript for id:", id);
     if (!id) return res.status(400).json({ ok: false, message: "Missing id param" });
 
-    // Try by interviewId (string) first, then fallback to _id
     let tdoc = await Transcript.findOne({ interviewId: id }).lean();
     if (!tdoc) {
-      // if id looks like ObjectId fallback
       try {
         tdoc = await Transcript.findById(id).lean();
-      } catch (e) {
-        // ignore cast error
-      }
+      } catch (e) { }
     }
 
-    if (!tdoc) return res.status(404).json({ ok: false, message: "Transcript not found" });
-
-    // Optionally filter or redact providerPayload if large:
-    // delete tdoc.providerPayload;
+    if (!tdoc) {
+      return res.json({ ok: true, transcript: null });
+    }
 
     return res.json({ ok: true, transcript: tdoc });
+
   } catch (err) {
     console.error("GET /transcripts/:id error", err);
     return res.status(500).json({ ok: false, error: String(err) });
