@@ -433,12 +433,7 @@ export default function InterviewSummary(): JSX.Element {
 
     async function fetchOverallScoreOnce(interviewId: string) {
         try {
-            const headers: Record<string, string> = { "Content-Type": "application/json" };
-
-            if (getToken) {
-                const token = await getToken({ template: "interview-backend" }).catch(() => null);
-                if (token) headers.Authorization = `Bearer ${token}`;
-            }
+            const headers = await getAuthHeaders();
 
             const res = await fetch(`${API}/api/webhooks/transcripts/${interviewId}`, {
                 method: "GET",
@@ -458,6 +453,9 @@ export default function InterviewSummary(): JSX.Element {
 
     useEffect(() => {
         if (!interviewId) return;
+        
+        console.log("Interview id type is: ", typeof interviewId);
+        console.log("Starting overall score polling for interview id:", interviewId);
 
         let intervalId: ReturnType<typeof setInterval>; 
 

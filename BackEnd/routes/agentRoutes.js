@@ -424,6 +424,7 @@ router.post("/post-call-transcript", verifyWebhook, async (req, res) => {
 router.get("/transcripts/:id", async (req, res) => {
   try {
     const id = req.params.id;
+    console.log("Fetching transcript for id:", id);
     if (!id) return res.status(400).json({ ok: false, message: "Missing id param" });
 
     // Try by interviewId (string) first, then fallback to _id
