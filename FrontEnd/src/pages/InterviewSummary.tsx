@@ -524,16 +524,6 @@ export default function InterviewSummary(): JSX.Element {
                         End Interview
                     </button> */}
 
-                    <div className="mt-4 p-3 bg-gray-800 rounded-md text-white">
-                        <div className="text-sm font-semibold">Overall Score</div>
-
-                        {scoreLoading ? (
-                            <div className="text-gray-400 text-sm">Waiting for score…</div>
-                        ) : (
-                            <div className="text-lg font-bold">{overallScore}</div>
-                        )}
-                    </div>
-
                     {widgetLoaded && (
                         <button
                             className="rounded-md border border-white/10 px-3 py-2 text-sm text-gray-300 hover:bg-white/5"
@@ -544,6 +534,16 @@ export default function InterviewSummary(): JSX.Element {
                         >
                             Reload widget
                         </button>
+                    )}
+                </div>
+
+                <div className="mt-4 p-3 bg-gray-800 rounded-md text-white">
+                    <div className="text-sm font-semibold">Overall Score</div>
+
+                    {scoreLoading ? (
+                        <div className="text-gray-400 text-sm">Waiting for score…</div>
+                    ) : (
+                        <div className="text-lg font-bold">{overallScore}</div>
                     )}
                 </div>
 
