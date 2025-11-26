@@ -1,364 +1,364 @@
-// // scoring.js
-// //
-// // Usage (example):
-// //   import { scoreResponses } from './scoring.js';
-// //   const scored = await scoreResponses({ ordered, DEBUG: true });
-// //   // scored.items is array of scored entries
-// //
-// // Expected shape of each "ordered" item:
-// // {
-// //   question_id: '12345',
-// //   question_title: '...',
-// //   question_text: '...',
-// //   answer_text: '... (the expected / ideal answer)',
-// //   response: '... (the user's combined response)'
-// // }
-
-// import { config } from "dotenv";
-// import path from "path";
-// config({ path: path.join(process.cwd(), "back.env") });
-
-// const API_KEY = process.env.GEMINI_API_KEY;
-// if (!API_KEY) {
-//   throw new Error("Missing GEMINI_API_KEY in environment (back.env)");
-// }
-
-// const MODEL = "gemini-2.0-flash";
-// const ENDPOINT = (model) =>
-//   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${API_KEY}`;
-
-// /* ----------------------
-//    Helpers: Gemini caller
-//    ---------------------- */
-
-// async function callGemini(prompt, retry = 0, DEBUG = false) {
-//   const url = ENDPOINT(MODEL);
-//   const body = {
-//     contents: [{ parts: [{ text: prompt }] }],
-//   };
-
-//   try {
-//     const res = await fetch(url, {
-//       method: "POST",
-//       headers: { "Content-Type": "application/json" },
-//       body: JSON.stringify(body),
-//     });
-
-//     const text = await res.text();
-
-//     if (!res.ok) {
-//       const snippet = text ? text.slice(0, 1000) : "";
-//       const err = new Error(`HTTP ${res.status} ${res.statusText} - ${snippet}`);
-//       err.status = res.status;
-//       throw err;
-//     }
-
-//     // Try parse JSON-like SDK response or return raw body
-//     try {
-//       const parsed = JSON.parse(text);
-//       const candidateText =
-//         parsed?.candidates?.[0]?.content?.parts?.[0]?.text ??
-//         parsed?.candidates?.[0]?.content?.[0]?.text ??
-//         parsed?.candidates?.[0]?.content ??
-//         null;
-//       if (candidateText) return candidateText.toString();
-//       // fallback to returning stringified response
-//       return text;
-//     } catch (e) {
-//       return text;
-//     }
-//   } catch (err) {
-//     const status = err?.status ?? null;
-//     if (
-//       retry < 3 &&
-//       (status === 429 || (status >= 500 && status < 600) || err.message.includes("Timeout"))
-//     ) {
-//       const backoffMs = 1000 * Math.pow(2, retry) + Math.floor(Math.random() * 300);
-//       if (DEBUG) console.warn(`Transient error (status=${status}). Retrying after ${backoffMs}ms.`);
-//       await new Promise((r) => setTimeout(r, backoffMs));
-//       return callGemini(prompt, retry + 1, DEBUG);
-//     }
-//     throw err;
-//   }
-// }
-
-// function extractJsonFromText(text) {
-//   if (!text || typeof text !== "string") return null;
-//   const start = text.indexOf("{");
-//   const end = text.lastIndexOf("}");
-//   if (start === -1 || end === -1 || end <= start) return null;
-//   const jsonText = text.slice(start, end + 1);
-//   try {
-//     return JSON.parse(jsonText);
-//   } catch (e) {
-//     return null;
-//   }
-// }
-
-// /* ----------------------
-//    Fallback lexical scorer
-//    (used if LLM response not parseable)
-//    ---------------------- */
-
-// function lexicalScore(expected, response) {
-//   if (!response || !response.trim()) return { correctness: 0, depth: 0, communication: 1, metrics: 0 };
-
-//   const normalize = (s) =>
-//     (s || "").toLowerCase().replace(/[^a-z0-9\s]+/g, " ").split(/\s+/).filter(Boolean);
-
-//   const eTokens = normalize(expected);
-//   const rTokens = normalize(response);
-
-//   const eSet = new Set(eTokens);
-//   const matches = rTokens.filter((t) => eSet.has(t));
-//   const overlap = matches.length / Math.max(1, eTokens.length);
-
-//   const correctness = Math.min(5, Math.round(overlap * 5)); // rough
-//   const depth = Math.min(5, Math.round(Math.min(1, rTokens.length / Math.max(10, eTokens.length)) * 5));
-//   const communication = Math.min(5, Math.round(Math.min(1, rTokens.length / 20) * 5));
-//   const metrics = /[0-9]+/.test(response) ? 2 : 0;
-
-//   const missed = eTokens.slice(0, 30).filter((t) => !rTokens.includes(t)).slice(0, 10);
-//   return {
-//     correctness,
-//     depth,
-//     communication,
-//     metrics,
-//     misses: Array.from(new Set(missed)).slice(0, 10),
-//   };
-// }
-
-// /* ----------------------
-//    Main scoring: prompts Gemini to produce JSON
-//    ---------------------- */
-
-// function buildScoringPrompt({ questionTitle, questionText, expectedAnswer, userResponse }) {
-//   const q = (questionTitle ? `${questionTitle}\n` : "") + (questionText || "");
-//   return `
-// You are an expert technical interviewer and a grader. Given the INTERVIEW QUESTION, the IDEAL/EXPECTED ANSWER, and the CANDIDATE RESPONSE, produce a strict JSON object (and nothing else) that evaluates the candidate response.
-
-// Respond EXACTLY with a single JSON object with these keys:
-
-// {
-//   "question_id": "<string>",            // copy the question id (if available) or empty string
-//   "scores": {
-//     "correctness": <number 0-5>,        // how correct / relevant the response is
-//     "depth": <number 0-5>,              // how deep / detailed / technical the response is
-//     "communication": <number 0-5>,      // clarity / concision / organization
-//     "metrics": <number 0-5>             // evidence of numbers/estimations/impact when relevant
-//   },
-//   "overall_score": <number 0-5>,        // overall rating (0-5). Prefer averaging the above and rounding to nearest 0.25 or 0.5
-//   "missed_points": ["short bullet strings..."],  // list of specific expected concepts or phrases the candidate missed
-//   "positive_points": ["short bullet strings..."],// list of specific strengths found in the response (phrases/ideas)
-//   "rationale": "brief explanation (1-3 sentences) of why these scores were given"
-// }
-
-// RULES:
-// - Base scores on semantic content: do NOT require exact wording.
-// - If the candidate did not answer or answered "not sure", score low but still produce helpful missed_points.
-// - For missed_points, extract concise expected concepts from the IDEAL/EXPECTED ANSWER. Aim for 3-6 items where possible.
-// - Keep rationale short (1-3 sentences).
-// - Use numeric scores only (no percentages), range 0..5 inclusive. overall_score must be consistent with the component scores.
-// - Output ONLY the JSON object, nothing else (no preface). Ensure valid JSON.
-
-// INPUT FIELDS:
-// INTERVIEW QUESTION:
-// ${q}
-
-// IDEAL/EXPECTED ANSWER:
-// ${expectedAnswer || ""}
-
-// CANDIDATE RESPONSE:
-// ${userResponse || ""}
-
-// Return JSON now.
-// `;
-// }
-
-// /* ----------------------
-//    Exported function
-//    ---------------------- */
-
-// export async function scoreResponses({
-//   ordered = [],
-//   DEBUG = false,
-//   sequential = true, // run sequentially by default to avoid rate bursts
-//   maxConcurrent = 1,
-// } = {}) {
-//   if (!Array.isArray(ordered)) {
-//     throw new Error("ordered must be an array");
-//   }
-
-//   const results = [];
-
-//   // processor for one item
-//   async function scoreOne(item) {
-//     const qid = item.question_id ? String(item.question_id) : "";
-//     const questionTitle = item.question_title || "";
-//     const questionText = item.question_text || "";
-//     const expectedAnswer = item.answer_text || item.expected_answer || "";
-//     const userResponse = item.response || item.user_response || item.userResponse || "";
-
-//     // Build prompt and call Gemini
-//     const prompt = buildScoringPrompt({ questionTitle, questionText, expectedAnswer, userResponse });
-
-//     if (DEBUG) {
-//       console.log("Scoring: qid=", qid, " prompt length:", prompt.length);
-//     }
-
-//     try {
-//       const respText = await callGemini(prompt, 0, DEBUG);
-//       if (DEBUG) console.log("Gemini response snippet:", (respText || "").slice(0, 800));
-
-//       const parsed = extractJsonFromText(respText);
-//       if (!parsed) {
-//         if (DEBUG) console.warn("Gemini did not return parseable JSON, falling back to lexical scorer.");
-//         // fallback: lexical scoring
-//         const lex = lexicalScore(expectedAnswer, userResponse);
-//         const componentScores = {
-//           correctness: lex.correctness,
-//           depth: lex.depth,
-//           communication: lex.communication,
-//           metrics: lex.metrics,
-//         };
-//         const overall = Math.round((Object.values(componentScores).reduce((a, b) => a + b, 0) / 4) * 2) / 2;
-//         return {
-//           ok: false,
-//           fallback: true,
-//           question_id: qid,
-//           scores: componentScores,
-//           overall_score: overall,
-//           missed_points: lex.misses || [],
-//           positive_points: [],
-//           rationale: "Fallback lexical scoring used (LLM output not parseable).",
-//         };
-//       }
-
-//       // Ensure numeric fields exist & normalize
-//       const scores = parsed.scores || {};
-//       const numericScores = {
-//         correctness: Number.isFinite(scores.correctness) ? Number(scores.correctness) : 0,
-//         depth: Number.isFinite(scores.depth) ? Number(scores.depth) : 0,
-//         communication: Number.isFinite(scores.communication) ? Number(scores.communication) : 0,
-//         metrics: Number.isFinite(scores.metrics) ? Number(scores.metrics) : 0,
-//       };
-
-//       // clamp to 0..5 and round to nearest 0.25
-//       for (const k of Object.keys(numericScores)) {
-//         let v = numericScores[k];
-//         if (typeof v !== "number" || Number.isNaN(v)) v = 0;
-//         v = Math.max(0, Math.min(5, v));
-//         numericScores[k] = Math.round(v * 4) / 4;
-//       }
-
-//       let overall = parsed.overall_score;
-//       if (!Number.isFinite(overall)) {
-//         overall = (numericScores.correctness + numericScores.depth + numericScores.communication + numericScores.metrics) / 4;
-//       }
-//       overall = Math.max(0, Math.min(5, overall));
-//       overall = Math.round(overall * 4) / 4;
-
-//       const missed = Array.isArray(parsed.missed_points) ? parsed.missed_points.map(String) : [];
-//       const positive = Array.isArray(parsed.positive_points) ? parsed.positive_points.map(String) : [];
-//       const rationale = parsed.rationale ? String(parsed.rationale).slice(0, 800) : "";
-
-//       return {
-//         ok: true,
-//         fallback: false,
-//         question_id: qid,
-//         scores: numericScores,
-//         overall_score: overall,
-//         missed_points: missed,
-//         positive_points: positive,
-//         rationale,
-//         raw_llm_text: typeof respText === "string" ? respText.slice(0, 3000) : null,
-//       };
-//     } catch (err) {
-//       if (DEBUG) console.error("scoreOne error:", err);
-//       const lex = lexicalScore(expectedAnswer, userResponse);
-//       const componentScores = {
-//         correctness: lex.correctness,
-//         depth: lex.depth,
-//         communication: lex.communication,
-//         metrics: lex.metrics,
-//       };
-//       const overall = Math.round((Object.values(componentScores).reduce((a, b) => a + b, 0) / 4) * 2) / 2;
-//       return {
-//         ok: false,
-//         fallback: true,
-//         question_id: qid,
-//         scores: componentScores,
-//         overall_score: overall,
-//         missed_points: lex.misses || [],
-//         positive_points: [],
-//         rationale: `Exception during LLM call: ${String(err).slice(0, 300)}`,
-//       };
-//     }
-//   }
-
-//   if (sequential || maxConcurrent <= 1) {
-//     for (const item of ordered) {
-//       const out = await scoreOne(item);
-//       results.push({ ...item, score: out });
-//     }
-//   } else {
-//     // simple concurrency pool
-//     const pool = [];
-//     const executing = [];
-//     const concurrency = Math.max(1, Math.min(maxConcurrent, ordered.length));
-//     for (const item of ordered) {
-//       const p = (async () => {
-//         const out = await scoreOne(item);
-//         results.push({ ...item, score: out });
-//       })();
-//       pool.push(p);
-//       if (pool.length >= concurrency) {
-//         await Promise.race(pool);
-//         // remove finished
-//         for (let i = pool.length - 1; i >= 0; i--) {
-//           if (pool[i].then) {
-//             // can't reliably check settled promise without extra lib; keep it simple:
-//           }
-//         }
-//       }
-//     }
-//     await Promise.all(pool);
-//   }
-
-//   // Aggregate: average overall (weighted by existence)
-//   const overallList = results
-//     .map((r) => r.score?.overall_score)
-//     .filter((v) => typeof v === "number" && !Number.isNaN(v));
-//   const aggregateOverall =
-//     overallList.length > 0 ? Math.round((overallList.reduce((a, b) => a + b, 0) / overallList.length) * 100) / 100 : null;
-
-//   return {
-//     ok: true,
-//     items: results,
-//     aggregateOverall,
-//     count: results.length,
-//   };
-// }
-
-// /* ----------------------
-//    Export default helpers for CommonJS/ES interop
-//    ---------------------- */
-
-// export default {
-//   scoreResponses,
-// };
 // scoring.js
 //
-// Strict scoring pipeline using Gemini (v1beta generateContent).
-// - Prechecks to avoid LLM being lenient on "not an answer" responses.
-// - Calls Gemini for high-quality scoring when the response passes prechecks.
-// - Fallback lexical scorer is stricter than before.
-//
-// Usage:
+// Usage (example):
 //   import { scoreResponses } from './scoring.js';
 //   const scored = await scoreResponses({ ordered, DEBUG: true });
+//   // scored.items is array of scored entries
+//
+// Expected shape of each "ordered" item:
+// {
+//   question_id: '12345',
+//   question_title: '...',
+//   question_text: '...',
+//   answer_text: '... (the expected / ideal answer)',
+//   response: '... (the user's combined response)'
+// }
 
-//------------------
+import { config } from "dotenv";
+import path from "path";
+config({ path: path.join(process.cwd(), "back.env") });
+
+const API_KEY = process.env.GEMINI_API_KEY;
+if (!API_KEY) {
+  throw new Error("Missing GEMINI_API_KEY in environment (back.env)");
+}
+
+const MODEL = "gemini-2.0-flash";
+const ENDPOINT = (model) =>
+  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${API_KEY}`;
+
+/* ----------------------
+   Helpers: Gemini caller
+   ---------------------- */
+
+async function callGemini(prompt, retry = 0, DEBUG = false) {
+  const url = ENDPOINT(MODEL);
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+  };
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const text = await res.text();
+
+    if (!res.ok) {
+      const snippet = text ? text.slice(0, 1000) : "";
+      const err = new Error(`HTTP ${res.status} ${res.statusText} - ${snippet}`);
+      err.status = res.status;
+      throw err;
+    }
+
+    // Try parse JSON-like SDK response or return raw body
+    try {
+      const parsed = JSON.parse(text);
+      const candidateText =
+        parsed?.candidates?.[0]?.content?.parts?.[0]?.text ??
+        parsed?.candidates?.[0]?.content?.[0]?.text ??
+        parsed?.candidates?.[0]?.content ??
+        null;
+      if (candidateText) return candidateText.toString();
+      // fallback to returning stringified response
+      return text;
+    } catch (e) {
+      return text;
+    }
+  } catch (err) {
+    const status = err?.status ?? null;
+    if (
+      retry < 3 &&
+      (status === 429 || (status >= 500 && status < 600) || err.message.includes("Timeout"))
+    ) {
+      const backoffMs = 1000 * Math.pow(2, retry) + Math.floor(Math.random() * 300);
+      if (DEBUG) console.warn(`Transient error (status=${status}). Retrying after ${backoffMs}ms.`);
+      await new Promise((r) => setTimeout(r, backoffMs));
+      return callGemini(prompt, retry + 1, DEBUG);
+    }
+    throw err;
+  }
+}
+
+function extractJsonFromText(text) {
+  if (!text || typeof text !== "string") return null;
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+  const jsonText = text.slice(start, end + 1);
+  try {
+    return JSON.parse(jsonText);
+  } catch (e) {
+    return null;
+  }
+}
+
+/* ----------------------
+   Fallback lexical scorer
+   (used if LLM response not parseable)
+   ---------------------- */
+
+function lexicalScore(expected, response) {
+  if (!response || !response.trim()) return { correctness: 0, depth: 0, communication: 1, metrics: 0 };
+
+  const normalize = (s) =>
+    (s || "").toLowerCase().replace(/[^a-z0-9\s]+/g, " ").split(/\s+/).filter(Boolean);
+
+  const eTokens = normalize(expected);
+  const rTokens = normalize(response);
+
+  const eSet = new Set(eTokens);
+  const matches = rTokens.filter((t) => eSet.has(t));
+  const overlap = matches.length / Math.max(1, eTokens.length);
+
+  const correctness = Math.min(5, Math.round(overlap * 5)); // rough
+  const depth = Math.min(5, Math.round(Math.min(1, rTokens.length / Math.max(10, eTokens.length)) * 5));
+  const communication = Math.min(5, Math.round(Math.min(1, rTokens.length / 20) * 5));
+  const metrics = /[0-9]+/.test(response) ? 2 : 0;
+
+  const missed = eTokens.slice(0, 30).filter((t) => !rTokens.includes(t)).slice(0, 10);
+  return {
+    correctness,
+    depth,
+    communication,
+    metrics,
+    misses: Array.from(new Set(missed)).slice(0, 10),
+  };
+}
+
+/* ----------------------
+   Main scoring: prompts Gemini to produce JSON
+   ---------------------- */
+
+function buildScoringPrompt({ questionTitle, questionText, expectedAnswer, userResponse }) {
+  const q = (questionTitle ? `${questionTitle}\n` : "") + (questionText || "");
+  return `
+You are an expert technical interviewer and a grader. Given the INTERVIEW QUESTION, the IDEAL/EXPECTED ANSWER, and the CANDIDATE RESPONSE, produce a strict JSON object (and nothing else) that evaluates the candidate response.
+
+Respond EXACTLY with a single JSON object with these keys:
+
+{
+  "question_id": "<string>",            // copy the question id (if available) or empty string
+  "scores": {
+    "correctness": <number 0-5>,        // how correct / relevant the response is
+    "depth": <number 0-5>,              // how deep / detailed / technical the response is
+    "communication": <number 0-5>,      // clarity / concision / organization
+    "metrics": <number 0-5>             // evidence of numbers/estimations/impact when relevant
+  },
+  "overall_score": <number 0-5>,        // overall rating (0-5). Prefer averaging the above and rounding to nearest 0.25 or 0.5
+  "missed_points": ["short bullet strings..."],  // list of specific expected concepts or phrases the candidate missed
+  "positive_points": ["short bullet strings..."],// list of specific strengths found in the response (phrases/ideas)
+  "rationale": "brief explanation (1-3 sentences) of why these scores were given"
+}
+
+RULES:
+- Base scores on semantic content: do NOT require exact wording.
+- If the candidate did not answer or answered "not sure", score low but still produce helpful missed_points.
+- For missed_points, extract concise expected concepts from the IDEAL/EXPECTED ANSWER. Aim for 3-6 items where possible.
+- Keep rationale short (1-3 sentences).
+- Use numeric scores only (no percentages), range 0..5 inclusive. overall_score must be consistent with the component scores.
+- Output ONLY the JSON object, nothing else (no preface). Ensure valid JSON.
+
+INPUT FIELDS:
+INTERVIEW QUESTION:
+${q}
+
+IDEAL/EXPECTED ANSWER:
+${expectedAnswer || ""}
+
+CANDIDATE RESPONSE:
+${userResponse || ""}
+
+Return JSON now.
+`;
+}
+
+/* ----------------------
+   Exported function
+   ---------------------- */
+
+export async function scoreResponses({
+  ordered = [],
+  DEBUG = false,
+  sequential = true, // run sequentially by default to avoid rate bursts
+  maxConcurrent = 1,
+} = {}) {
+  if (!Array.isArray(ordered)) {
+    throw new Error("ordered must be an array");
+  }
+
+  const results = [];
+
+  // processor for one item
+  async function scoreOne(item) {
+    const qid = item.question_id ? String(item.question_id) : "";
+    const questionTitle = item.question_title || "";
+    const questionText = item.question_text || "";
+    const expectedAnswer = item.answer_text || item.expected_answer || "";
+    const userResponse = item.response || item.user_response || item.userResponse || "";
+
+    // Build prompt and call Gemini
+    const prompt = buildScoringPrompt({ questionTitle, questionText, expectedAnswer, userResponse });
+
+    if (DEBUG) {
+      console.log("Scoring: qid=", qid, " prompt length:", prompt.length);
+    }
+
+    try {
+      const respText = await callGemini(prompt, 0, DEBUG);
+      if (DEBUG) console.log("Gemini response snippet:", (respText || "").slice(0, 800));
+
+      const parsed = extractJsonFromText(respText);
+      if (!parsed) {
+        if (DEBUG) console.warn("Gemini did not return parseable JSON, falling back to lexical scorer.");
+        // fallback: lexical scoring
+        const lex = lexicalScore(expectedAnswer, userResponse);
+        const componentScores = {
+          correctness: lex.correctness,
+          depth: lex.depth,
+          communication: lex.communication,
+          metrics: lex.metrics,
+        };
+        const overall = Math.round((Object.values(componentScores).reduce((a, b) => a + b, 0) / 4) * 2) / 2;
+        return {
+          ok: false,
+          fallback: true,
+          question_id: qid,
+          scores: componentScores,
+          overall_score: overall,
+          missed_points: lex.misses || [],
+          positive_points: [],
+          rationale: "Fallback lexical scoring used (LLM output not parseable).",
+        };
+      }
+
+      // Ensure numeric fields exist & normalize
+      const scores = parsed.scores || {};
+      const numericScores = {
+        correctness: Number.isFinite(scores.correctness) ? Number(scores.correctness) : 0,
+        depth: Number.isFinite(scores.depth) ? Number(scores.depth) : 0,
+        communication: Number.isFinite(scores.communication) ? Number(scores.communication) : 0,
+        metrics: Number.isFinite(scores.metrics) ? Number(scores.metrics) : 0,
+      };
+
+      // clamp to 0..5 and round to nearest 0.25
+      for (const k of Object.keys(numericScores)) {
+        let v = numericScores[k];
+        if (typeof v !== "number" || Number.isNaN(v)) v = 0;
+        v = Math.max(0, Math.min(5, v));
+        numericScores[k] = Math.round(v * 4) / 4;
+      }
+
+      let overall = parsed.overall_score;
+      if (!Number.isFinite(overall)) {
+        overall = (numericScores.correctness + numericScores.depth + numericScores.communication + numericScores.metrics) / 4;
+      }
+      overall = Math.max(0, Math.min(5, overall));
+      overall = Math.round(overall * 4) / 4;
+
+      const missed = Array.isArray(parsed.missed_points) ? parsed.missed_points.map(String) : [];
+      const positive = Array.isArray(parsed.positive_points) ? parsed.positive_points.map(String) : [];
+      const rationale = parsed.rationale ? String(parsed.rationale).slice(0, 800) : "";
+
+      return {
+        ok: true,
+        fallback: false,
+        question_id: qid,
+        scores: numericScores,
+        overall_score: overall,
+        missed_points: missed,
+        positive_points: positive,
+        rationale,
+        raw_llm_text: typeof respText === "string" ? respText.slice(0, 3000) : null,
+      };
+    } catch (err) {
+      if (DEBUG) console.error("scoreOne error:", err);
+      const lex = lexicalScore(expectedAnswer, userResponse);
+      const componentScores = {
+        correctness: lex.correctness,
+        depth: lex.depth,
+        communication: lex.communication,
+        metrics: lex.metrics,
+      };
+      const overall = Math.round((Object.values(componentScores).reduce((a, b) => a + b, 0) / 4) * 2) / 2;
+      return {
+        ok: false,
+        fallback: true,
+        question_id: qid,
+        scores: componentScores,
+        overall_score: overall,
+        missed_points: lex.misses || [],
+        positive_points: [],
+        rationale: `Exception during LLM call: ${String(err).slice(0, 300)}`,
+      };
+    }
+  }
+
+  if (sequential || maxConcurrent <= 1) {
+    for (const item of ordered) {
+      const out = await scoreOne(item);
+      results.push({ ...item, score: out });
+    }
+  } else {
+    // simple concurrency pool
+    const pool = [];
+    const executing = [];
+    const concurrency = Math.max(1, Math.min(maxConcurrent, ordered.length));
+    for (const item of ordered) {
+      const p = (async () => {
+        const out = await scoreOne(item);
+        results.push({ ...item, score: out });
+      })();
+      pool.push(p);
+      if (pool.length >= concurrency) {
+        await Promise.race(pool);
+        // remove finished
+        for (let i = pool.length - 1; i >= 0; i--) {
+          if (pool[i].then) {
+            // can't reliably check settled promise without extra lib; keep it simple:
+          }
+        }
+      }
+    }
+    await Promise.all(pool);
+  }
+
+  // Aggregate: average overall (weighted by existence)
+  const overallList = results
+    .map((r) => r.score?.overall_score)
+    .filter((v) => typeof v === "number" && !Number.isNaN(v));
+  const aggregateOverall =
+    overallList.length > 0 ? Math.round((overallList.reduce((a, b) => a + b, 0) / overallList.length) * 100) / 100 : null;
+
+  return {
+    ok: true,
+    items: results,
+    aggregateOverall,
+    count: results.length,
+  };
+}
+
+/* ----------------------
+   Export default helpers for CommonJS/ES interop
+   ---------------------- */
+
+export default {
+  scoreResponses,
+};
+scoring.js
+
+Strict scoring pipeline using Gemini (v1beta generateContent).
+- Prechecks to avoid LLM being lenient on "not an answer" responses.
+- Calls Gemini for high-quality scoring when the response passes prechecks.
+- Fallback lexical scorer is stricter than before.
+
+Usage:
+  import { scoreResponses } from './scoring.js';
+  const scored = await scoreResponses({ ordered, DEBUG: true });
+
+------------------
 
 // import { config } from "dotenv";
 // import path from "path";
@@ -778,343 +778,345 @@
 // - Small but nonzero scores for short/low-overlap replies that are relevant.
 // - Gemini used for detailed scoring; lexical fallback used when LLM not parseable.
 
-import { config } from "dotenv";
-import path from "path";
-config({ path: path.join(process.cwd(), "back.env") });
+//-----------------
 
-const API_KEY = process.env.GEMINI_API_KEY;
-if (!API_KEY) {
-  throw new Error("Missing GEMINI_API_KEY in environment (back.env)");
-}
+// import { config } from "dotenv";
+// import path from "path";
+// config({ path: path.join(process.cwd(), "back.env") });
 
-const MODEL = "gemini-2.0-flash";
-const ENDPOINT = (model) =>
-  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${API_KEY}`;
+// const API_KEY = process.env.GEMINI_API_KEY;
+// if (!API_KEY) {
+//   throw new Error("Missing GEMINI_API_KEY in environment (back.env)");
+// }
 
-/* ---------- Utilities ---------- */
-function safeLower(s) {
-  return (s || "").toString().toLowerCase();
-}
-function tokenize(s) {
-  return (safeLower(s).replace(/[^a-z0-9\s]+/g, " ").split(/\s+/).filter(Boolean));
-}
-const STOPWORDS = new Set([
-  "the","a","an","and","or","of","to","in","on","for","with","is","are","was","were","that","this","it",
-  "as","by","be","from","at","which","but","has","have","had","i","you","we","they","he","she","not","do","does","did"
-]);
-function meaningfulTokens(text) {
-  return tokenize(text).filter(t => !STOPWORDS.has(t) && t.length > 1);
-}
+// const MODEL = "gemini-2.0-flash";
+// const ENDPOINT = (model) =>
+//   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${API_KEY}`;
 
-/* ---------- Gemini caller ---------- */
-async function callGemini(prompt, retry = 0, DEBUG = false) {
-  const url = ENDPOINT(MODEL);
-  const body = { contents: [{ parts: [{ text: prompt }] }] };
+// /* ---------- Utilities ---------- */
+// function safeLower(s) {
+//   return (s || "").toString().toLowerCase();
+// }
+// function tokenize(s) {
+//   return (safeLower(s).replace(/[^a-z0-9\s]+/g, " ").split(/\s+/).filter(Boolean));
+// }
+// const STOPWORDS = new Set([
+//   "the","a","an","and","or","of","to","in","on","for","with","is","are","was","were","that","this","it",
+//   "as","by","be","from","at","which","but","has","have","had","i","you","we","they","he","she","not","do","does","did"
+// ]);
+// function meaningfulTokens(text) {
+//   return tokenize(text).filter(t => !STOPWORDS.has(t) && t.length > 1);
+// }
 
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+// /* ---------- Gemini caller ---------- */
+// async function callGemini(prompt, retry = 0, DEBUG = false) {
+//   const url = ENDPOINT(MODEL);
+//   const body = { contents: [{ parts: [{ text: prompt }] }] };
 
-    const text = await res.text();
+//   try {
+//     const res = await fetch(url, {
+//       method: "POST",
+//       headers: { "Content-Type": "application/json" },
+//       body: JSON.stringify(body),
+//     });
 
-    if (!res.ok) {
-      const snippet = text ? text.slice(0, 1000) : "";
-      const err = new Error(`HTTP ${res.status} ${res.statusText} - ${snippet}`);
-      err.status = res.status;
-      throw err;
-    }
+//     const text = await res.text();
 
-    try {
-      const parsed = JSON.parse(text);
-      const candidateText =
-        parsed?.candidates?.[0]?.content?.parts?.[0]?.text ??
-        parsed?.candidates?.[0]?.content?.[0]?.text ??
-        parsed?.candidates?.[0]?.content ??
-        null;
-      if (candidateText) return candidateText.toString();
-      return text;
-    } catch (e) {
-      return text;
-    }
-  } catch (err) {
-    const status = err?.status ?? null;
-    if (
-      retry < 3 &&
-      (status === 429 || (status >= 500 && status < 600) || err.message.includes("Timeout"))
-    ) {
-      const backoffMs = 1000 * Math.pow(2, retry) + Math.floor(Math.random() * 300);
-      if (DEBUG) console.warn(`Transient error (status=${status}). Retrying after ${backoffMs}ms.`);
-      await new Promise((r) => setTimeout(r, backoffMs));
-      return callGemini(prompt, retry + 1, DEBUG);
-    }
-    throw err;
-  }
-}
+//     if (!res.ok) {
+//       const snippet = text ? text.slice(0, 1000) : "";
+//       const err = new Error(`HTTP ${res.status} ${res.statusText} - ${snippet}`);
+//       err.status = res.status;
+//       throw err;
+//     }
 
-function extractJsonFromText(text) {
-  if (!text || typeof text !== "string") return null;
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) return null;
-  const jsonText = text.slice(start, end + 1);
-  try { return JSON.parse(jsonText); } catch (e) { return null; }
-}
+//     try {
+//       const parsed = JSON.parse(text);
+//       const candidateText =
+//         parsed?.candidates?.[0]?.content?.parts?.[0]?.text ??
+//         parsed?.candidates?.[0]?.content?.[0]?.text ??
+//         parsed?.candidates?.[0]?.content ??
+//         null;
+//       if (candidateText) return candidateText.toString();
+//       return text;
+//     } catch (e) {
+//       return text;
+//     }
+//   } catch (err) {
+//     const status = err?.status ?? null;
+//     if (
+//       retry < 3 &&
+//       (status === 429 || (status >= 500 && status < 600) || err.message.includes("Timeout"))
+//     ) {
+//       const backoffMs = 1000 * Math.pow(2, retry) + Math.floor(Math.random() * 300);
+//       if (DEBUG) console.warn(`Transient error (status=${status}). Retrying after ${backoffMs}ms.`);
+//       await new Promise((r) => setTimeout(r, backoffMs));
+//       return callGemini(prompt, retry + 1, DEBUG);
+//     }
+//     throw err;
+//   }
+// }
 
-/* ---------- Non-answer detection (explicit only) ---------- */
+// function extractJsonFromText(text) {
+//   if (!text || typeof text !== "string") return null;
+//   const start = text.indexOf("{");
+//   const end = text.lastIndexOf("}");
+//   if (start === -1 || end === -1 || end <= start) return null;
+//   const jsonText = text.slice(start, end + 1);
+//   try { return JSON.parse(jsonText); } catch (e) { return null; }
+// }
 
-// Only treat explicit phrases and empty text as "non-answer".
-const EXPLICIT_NON_ANSWER_RE = /^\s*(not sure|i don't know|dont know|idk|no idea|not sure\.?|skip\b|pass\b|n\/a)\b/i;
+// /* ---------- Non-answer detection (explicit only) ---------- */
 
-function isExplicitNonAnswer(response) {
-  if (!response || !response.trim()) return true;
-  if (EXPLICIT_NON_ANSWER_RE.test(response.trim())) return true;
-  return false;
-}
+// // Only treat explicit phrases and empty text as "non-answer".
+// const EXPLICIT_NON_ANSWER_RE = /^\s*(not sure|i don't know|dont know|idk|no idea|not sure\.?|skip\b|pass\b|n\/a)\b/i;
 
-/* ---------- Lexical scorer (lenient baseline) ---------- */
+// function isExplicitNonAnswer(response) {
+//   if (!response || !response.trim()) return true;
+//   if (EXPLICIT_NON_ANSWER_RE.test(response.trim())) return true;
+//   return false;
+// }
 
-function lexicalScoreLenient(expected, response) {
-  if (!response || !response.trim()) {
-    return { correctness: 0, depth: 0, communication: 1, metrics: 0, misses: [], positives: [] };
-  }
+// /* ---------- Lexical scorer (lenient baseline) ---------- */
 
-  const eTokens = meaningfulTokens(expected);
-  const rTokens = meaningfulTokens(response);
+// function lexicalScoreLenient(expected, response) {
+//   if (!response || !response.trim()) {
+//     return { correctness: 0, depth: 0, communication: 1, metrics: 0, misses: [], positives: [] };
+//   }
 
-  // If no meaningful expected tokens, be generous
-  if (eTokens.length === 0) {
-    const comm = Math.min(5, Math.round(Math.min(1, rTokens.length / 20) * 5));
-    return { correctness: Math.min(3, comm), depth: Math.min(2, comm), communication: comm, metrics: /\d/.test(response) ? 1 : 0, misses: [], positives: rTokens.slice(0,4) };
-  }
+//   const eTokens = meaningfulTokens(expected);
+//   const rTokens = meaningfulTokens(response);
 
-  const eSet = new Set(eTokens);
-  const matches = rTokens.filter(t => eSet.has(t));
-  const overlap = matches.length / eTokens.length; // fraction of expected concept tokens seen
+//   // If no meaningful expected tokens, be generous
+//   if (eTokens.length === 0) {
+//     const comm = Math.min(5, Math.round(Math.min(1, rTokens.length / 20) * 5));
+//     return { correctness: Math.min(3, comm), depth: Math.min(2, comm), communication: comm, metrics: /\d/.test(response) ? 1 : 0, misses: [], positives: rTokens.slice(0,4) };
+//   }
 
-  // Lenient thresholds:
-  // - tiny overlap -> small positive correctness (1)
-  // - moderate overlap -> scale up
-  let correctness;
-  if (overlap <= 0) correctness = 1;                // some reply but no exact token match -> minimal non-zero
-  else correctness = Math.max(1, Math.round(Math.min(5, overlap * 5)));
+//   const eSet = new Set(eTokens);
+//   const matches = rTokens.filter(t => eSet.has(t));
+//   const overlap = matches.length / eTokens.length; // fraction of expected concept tokens seen
 
-  const depth = Math.min(5, Math.round(Math.min(1, rTokens.length / Math.max(8, eTokens.length)) * 5));
-  const communication = Math.min(5, Math.round(Math.min(1, rTokens.length / 20) * 5));
-  const metrics = /\d/.test(response) ? Math.min(5, 1 + Math.floor(matches.length / 3)) : 0;
+//   // Lenient thresholds:
+//   // - tiny overlap -> small positive correctness (1)
+//   // - moderate overlap -> scale up
+//   let correctness;
+//   if (overlap <= 0) correctness = 1;                // some reply but no exact token match -> minimal non-zero
+//   else correctness = Math.max(1, Math.round(Math.min(5, overlap * 5)));
 
-  const missed = eTokens.slice(0, 30).filter(t => !rTokens.includes(t)).slice(0, 8);
-  const positives = Array.from(new Set(matches)).slice(0, 6);
+//   const depth = Math.min(5, Math.round(Math.min(1, rTokens.length / Math.max(8, eTokens.length)) * 5));
+//   const communication = Math.min(5, Math.round(Math.min(1, rTokens.length / 20) * 5));
+//   const metrics = /\d/.test(response) ? Math.min(5, 1 + Math.floor(matches.length / 3)) : 0;
 
-  return {
-    correctness: Math.max(0, Math.min(5, correctness)),
-    depth,
-    communication,
-    metrics,
-    misses: missed,
-    positives,
-  };
-}
+//   const missed = eTokens.slice(0, 30).filter(t => !rTokens.includes(t)).slice(0, 8);
+//   const positives = Array.from(new Set(matches)).slice(0, 6);
 
-/* ---------- Prompt builder (lenient instructions but strict JSON) ---------- */
+//   return {
+//     correctness: Math.max(0, Math.min(5, correctness)),
+//     depth,
+//     communication,
+//     metrics,
+//     misses: missed,
+//     positives,
+//   };
+// }
 
-function buildScoringPrompt({ questionTitle, questionText, expectedAnswer, userResponse }) {
-  const q = (questionTitle ? `${questionTitle}\n` : "") + (questionText || "");
-  return `
-You are an expert technical interviewer and grader. Be fair and pragmatic.
-Given the INTERVIEW QUESTION, the IDEAL/EXPECTED ANSWER, and the CANDIDATE RESPONSE, produce exactly one JSON object (and nothing else) matching this schema:
+// /* ---------- Prompt builder (lenient instructions but strict JSON) ---------- */
 
-{
-  "question_id": "<string>",
-  "scores": {
-    "correctness": <integer 0-5>,
-    "depth": <integer 0-5>,
-    "communication": <integer 0-5>,
-    "metrics": <integer 0-5>
-  },
-  "overall_score": <number 0-5>,
-  "missed_points": ["short phrase..."],
-  "positive_points": ["short phrase..."],
-  "rationale": "1-2 sentence explanation"
-}
+// function buildScoringPrompt({ questionTitle, questionText, expectedAnswer, userResponse }) {
+//   const q = (questionTitle ? `${questionTitle}\n` : "") + (questionText || "");
+//   return `
+// You are an expert technical interviewer and grader. Be fair and pragmatic.
+// Given the INTERVIEW QUESTION, the IDEAL/EXPECTED ANSWER, and the CANDIDATE RESPONSE, produce exactly one JSON object (and nothing else) matching this schema:
 
-Rules:
-- If the candidate explicitly skipped (e.g. 'skip', 'pass') or answered 'not sure' / 'idk', overall_score MUST be 0.
-- Otherwise be forgiving: award some score if the reply is related, even if partial.
-- Use semantic judgement (paraphrase/synonyms OK).
-- overall_score should be consistent with the components (mean preferred), rounded to nearest 0.25.
-- Output ONLY the JSON object.
+// {
+//   "question_id": "<string>",
+//   "scores": {
+//     "correctness": <integer 0-5>,
+//     "depth": <integer 0-5>,
+//     "communication": <integer 0-5>,
+//     "metrics": <integer 0-5>
+//   },
+//   "overall_score": <number 0-5>,
+//   "missed_points": ["short phrase..."],
+//   "positive_points": ["short phrase..."],
+//   "rationale": "1-2 sentence explanation"
+// }
 
-INTERVIEW QUESTION:
-${q}
+// Rules:
+// - If the candidate explicitly skipped (e.g. 'skip', 'pass') or answered 'not sure' / 'idk', overall_score MUST be 0.
+// - Otherwise be forgiving: award some score if the reply is related, even if partial.
+// - Use semantic judgement (paraphrase/synonyms OK).
+// - overall_score should be consistent with the components (mean preferred), rounded to nearest 0.25.
+// - Output ONLY the JSON object.
 
-IDEAL/EXPECTED ANSWER:
-${expectedAnswer || ""}
+// INTERVIEW QUESTION:
+// ${q}
 
-CANDIDATE RESPONSE:
-${userResponse || ""}
+// IDEAL/EXPECTED ANSWER:
+// ${expectedAnswer || ""}
 
-Return JSON now.`.trim();
-}
+// CANDIDATE RESPONSE:
+// ${userResponse || ""}
 
-/* ---------- Main exported function ---------- */
+// Return JSON now.`.trim();
+// }
 
-export async function scoreResponses({
-  ordered = [],
-  DEBUG = false,
-  sequential = true,
-  maxConcurrent = 1,
-} = {}) {
-  if (!Array.isArray(ordered)) throw new Error("ordered must be an array");
-  const results = [];
+// /* ---------- Main exported function ---------- */
 
-  async function scoreOne(item) {
-    const qid = item.question_id ? String(item.question_id) : "";
-    const questionTitle = item.question_title || "";
-    const questionText = item.question_text || "";
-    const expectedAnswer = item.answer_text || item.expected_answer || "";
-    const userResponse = item.response || item.user_response || item.userResponse || "";
+// export async function scoreResponses({
+//   ordered = [],
+//   DEBUG = false,
+//   sequential = true,
+//   maxConcurrent = 1,
+// } = {}) {
+//   if (!Array.isArray(ordered)) throw new Error("ordered must be an array");
+//   const results = [];
 
-    // 1) explicit non-answer -> 0
-    if (isExplicitNonAnswer(userResponse)) {
-      const eTokens = meaningfulTokens(expectedAnswer).slice(0,6);
-      return {
-        ok: true,
-        fallback: true,
-        question_id: qid,
-        scores: { correctness: 0, depth: 0, communication: 1, metrics: 0 },
-        overall_score: 0,
-        missed_points: eTokens.length ? eTokens : ["No substantive answer provided"],
-        positive_points: [],
-        rationale: "Candidate explicitly skipped or indicated 'not sure' / 'idk'.",
-      };
-    }
+//   async function scoreOne(item) {
+//     const qid = item.question_id ? String(item.question_id) : "";
+//     const questionTitle = item.question_title || "";
+//     const questionText = item.question_text || "";
+//     const expectedAnswer = item.answer_text || item.expected_answer || "";
+//     const userResponse = item.response || item.user_response || item.userResponse || "";
 
-    // 2) compute lenient lexical baseline
-    const lex = lexicalScoreLenient(expectedAnswer, userResponse);
+//     // 1) explicit non-answer -> 0
+//     if (isExplicitNonAnswer(userResponse)) {
+//       const eTokens = meaningfulTokens(expectedAnswer).slice(0,6);
+//       return {
+//         ok: true,
+//         fallback: true,
+//         question_id: qid,
+//         scores: { correctness: 0, depth: 0, communication: 1, metrics: 0 },
+//         overall_score: 0,
+//         missed_points: eTokens.length ? eTokens : ["No substantive answer provided"],
+//         positive_points: [],
+//         rationale: "Candidate explicitly skipped or indicated 'not sure' / 'idk'.",
+//       };
+//     }
 
-    // 3) If lex indicates some overlap / relevance, allow LLM to refine; otherwise still allow small score (lenient)
-    const prompt = buildScoringPrompt({ questionTitle, questionText, expectedAnswer, userResponse });
-    if (DEBUG) console.log("Scoring prompt len:", prompt.length);
+//     // 2) compute lenient lexical baseline
+//     const lex = lexicalScoreLenient(expectedAnswer, userResponse);
 
-    try {
-      const respText = await callGemini(prompt, 0, DEBUG);
-      if (DEBUG) console.log("Gemini response (snippet):", (respText || "").slice(0, 1200));
+//     // 3) If lex indicates some overlap / relevance, allow LLM to refine; otherwise still allow small score (lenient)
+//     const prompt = buildScoringPrompt({ questionTitle, questionText, expectedAnswer, userResponse });
+//     if (DEBUG) console.log("Scoring prompt len:", prompt.length);
 
-      const parsed = extractJsonFromText(respText);
-      if (!parsed) {
-        if (DEBUG) console.warn("Gemini returned non-JSON; using lenient lexical fallback.");
-        const avg = Math.round((lex.correctness + lex.depth + lex.communication + lex.metrics) / 4 * 4) / 4;
-        return {
-          ok: false,
-          fallback: true,
-          question_id: qid,
-          scores: {
-            correctness: lex.correctness,
-            depth: lex.depth,
-            communication: lex.communication,
-            metrics: lex.metrics,
-          },
-          overall_score: avg,
-          missed_points: lex.misses || [],
-          positive_points: lex.positives || [],
-          rationale: "LLM output not parseable; lenient lexical fallback used.",
-        };
-      }
+//     try {
+//       const respText = await callGemini(prompt, 0, DEBUG);
+//       if (DEBUG) console.log("Gemini response (snippet):", (respText || "").slice(0, 1200));
 
-      // Normalize parsed numeric scores
-      const scores = parsed.scores || {};
-      const numericScores = {
-        correctness: Number.isFinite(scores.correctness) ? Math.round(scores.correctness) : Math.round(lex.correctness),
-        depth: Number.isFinite(scores.depth) ? Math.round(scores.depth) : Math.round(lex.depth),
-        communication: Number.isFinite(scores.communication) ? Math.round(scores.communication) : Math.round(lex.communication),
-        metrics: Number.isFinite(scores.metrics) ? Math.round(scores.metrics) : Math.round(lex.metrics),
-      };
+//       const parsed = extractJsonFromText(respText);
+//       if (!parsed) {
+//         if (DEBUG) console.warn("Gemini returned non-JSON; using lenient lexical fallback.");
+//         const avg = Math.round((lex.correctness + lex.depth + lex.communication + lex.metrics) / 4 * 4) / 4;
+//         return {
+//           ok: false,
+//           fallback: true,
+//           question_id: qid,
+//           scores: {
+//             correctness: lex.correctness,
+//             depth: lex.depth,
+//             communication: lex.communication,
+//             metrics: lex.metrics,
+//           },
+//           overall_score: avg,
+//           missed_points: lex.misses || [],
+//           positive_points: lex.positives || [],
+//           rationale: "LLM output not parseable; lenient lexical fallback used.",
+//         };
+//       }
 
-      for (const k of Object.keys(numericScores)) {
-        let v = numericScores[k];
-        if (typeof v !== "number" || Number.isNaN(v)) v = 0;
-        numericScores[k] = Math.max(0, Math.min(5, v));
-      }
+//       // Normalize parsed numeric scores
+//       const scores = parsed.scores || {};
+//       const numericScores = {
+//         correctness: Number.isFinite(scores.correctness) ? Math.round(scores.correctness) : Math.round(lex.correctness),
+//         depth: Number.isFinite(scores.depth) ? Math.round(scores.depth) : Math.round(lex.depth),
+//         communication: Number.isFinite(scores.communication) ? Math.round(scores.communication) : Math.round(lex.communication),
+//         metrics: Number.isFinite(scores.metrics) ? Math.round(scores.metrics) : Math.round(lex.metrics),
+//       };
 
-      let overall = parsed.overall_score;
-      if (!Number.isFinite(overall)) {
-        overall = (numericScores.correctness + numericScores.depth + numericScores.communication + numericScores.metrics) / 4;
-      }
-      overall = Math.max(0, Math.min(5, Number(overall)));
-      overall = Math.round(overall * 4) / 4; // nearest 0.25
+//       for (const k of Object.keys(numericScores)) {
+//         let v = numericScores[k];
+//         if (typeof v !== "number" || Number.isNaN(v)) v = 0;
+//         numericScores[k] = Math.max(0, Math.min(5, v));
+//       }
 
-      // If Gemini gave nonzero but there is literally zero overlap AND userResponse extremely short,
-      // reduce but do NOT force zero (lenient policy).
-      const eTokens = meaningfulTokens(expectedAnswer);
-      const rTokens = meaningfulTokens(userResponse);
-      const overlap = eTokens.length ? (rTokens.filter(t => eTokens.includes(t)).length / eTokens.length) : 0;
-      if (overlap === 0 && rTokens.length <= 3 && overall > 0) {
-        // reduce slightly but keep >0 if response had some content
-        overall = Math.max(0.25, overall * 0.5);
-      }
+//       let overall = parsed.overall_score;
+//       if (!Number.isFinite(overall)) {
+//         overall = (numericScores.correctness + numericScores.depth + numericScores.communication + numericScores.metrics) / 4;
+//       }
+//       overall = Math.max(0, Math.min(5, Number(overall)));
+//       overall = Math.round(overall * 4) / 4; // nearest 0.25
 
-      const missed = Array.isArray(parsed.missed_points) ? parsed.missed_points.map(String) : [];
-      const positive = Array.isArray(parsed.positive_points) ? parsed.positive_points.map(String) : [];
-      const rationale = parsed.rationale ? String(parsed.rationale).slice(0, 800) : "";
+//       // If Gemini gave nonzero but there is literally zero overlap AND userResponse extremely short,
+//       // reduce but do NOT force zero (lenient policy).
+//       const eTokens = meaningfulTokens(expectedAnswer);
+//       const rTokens = meaningfulTokens(userResponse);
+//       const overlap = eTokens.length ? (rTokens.filter(t => eTokens.includes(t)).length / eTokens.length) : 0;
+//       if (overlap === 0 && rTokens.length <= 3 && overall > 0) {
+//         // reduce slightly but keep >0 if response had some content
+//         overall = Math.max(0.25, overall * 0.5);
+//       }
 
-      return {
-        ok: true,
-        fallback: false,
-        question_id: qid,
-        scores: numericScores,
-        overall_score: overall,
-        missed_points: missed,
-        positive_points: positive,
-        rationale,
-        raw_llm_text: typeof respText === "string" ? respText.slice(0, 3000) : null,
-      };
-    } catch (err) {
-      if (DEBUG) console.error("scoreOne exception:", err);
-      const avg = Math.round((lex.correctness + lex.depth + lex.communication + lex.metrics) / 4 * 4) / 4;
-      return {
-        ok: false,
-        fallback: true,
-        question_id: qid,
-        scores: {
-          correctness: lex.correctness,
-          depth: lex.depth,
-          communication: lex.communication,
-          metrics: lex.metrics,
-        },
-        overall_score: avg,
-        missed_points: lex.misses || [],
-        positive_points: lex.positives || [],
-        rationale: `Exception during LLM call: ${String(err).slice(0, 300)}`,
-      };
-    }
-  }
+//       const missed = Array.isArray(parsed.missed_points) ? parsed.missed_points.map(String) : [];
+//       const positive = Array.isArray(parsed.positive_points) ? parsed.positive_points.map(String) : [];
+//       const rationale = parsed.rationale ? String(parsed.rationale).slice(0, 800) : "";
 
-  if (sequential || maxConcurrent <= 1) {
-    for (const item of ordered) {
-      const out = await scoreOne(item);
-      results.push({ ...item, score: out });
-    }
-  } else {
-    const pool = ordered.map((item) => scoreOne(item).then((out) => ({ ...item, score: out })));
-    const settled = await Promise.all(pool);
-    results.push(...settled);
-  }
+//       return {
+//         ok: true,
+//         fallback: false,
+//         question_id: qid,
+//         scores: numericScores,
+//         overall_score: overall,
+//         missed_points: missed,
+//         positive_points: positive,
+//         rationale,
+//         raw_llm_text: typeof respText === "string" ? respText.slice(0, 3000) : null,
+//       };
+//     } catch (err) {
+//       if (DEBUG) console.error("scoreOne exception:", err);
+//       const avg = Math.round((lex.correctness + lex.depth + lex.communication + lex.metrics) / 4 * 4) / 4;
+//       return {
+//         ok: false,
+//         fallback: true,
+//         question_id: qid,
+//         scores: {
+//           correctness: lex.correctness,
+//           depth: lex.depth,
+//           communication: lex.communication,
+//           metrics: lex.metrics,
+//         },
+//         overall_score: avg,
+//         missed_points: lex.misses || [],
+//         positive_points: lex.positives || [],
+//         rationale: `Exception during LLM call: ${String(err).slice(0, 300)}`,
+//       };
+//     }
+//   }
 
-  const overallList = results
-    .map((r) => r.score?.overall_score)
-    .filter((v) => typeof v === "number" && !Number.isNaN(v));
-  const aggregateOverall =
-    overallList.length > 0 ? Math.round((overallList.reduce((a, b) => a + b, 0) / overallList.length) * 100) / 100 : null;
+//   if (sequential || maxConcurrent <= 1) {
+//     for (const item of ordered) {
+//       const out = await scoreOne(item);
+//       results.push({ ...item, score: out });
+//     }
+//   } else {
+//     const pool = ordered.map((item) => scoreOne(item).then((out) => ({ ...item, score: out })));
+//     const settled = await Promise.all(pool);
+//     results.push(...settled);
+//   }
 
-  return {
-    ok: true,
-    items: results,
-    aggregateOverall,
-    count: results.length,
-  };
-}
+//   const overallList = results
+//     .map((r) => r.score?.overall_score)
+//     .filter((v) => typeof v === "number" && !Number.isNaN(v));
+//   const aggregateOverall =
+//     overallList.length > 0 ? Math.round((overallList.reduce((a, b) => a + b, 0) / overallList.length) * 100) / 100 : null;
 
-export default { scoreResponses };
+//   return {
+//     ok: true,
+//     items: results,
+//     aggregateOverall,
+//     count: results.length,
+//   };
+// }
+
+// export default { scoreResponses };
