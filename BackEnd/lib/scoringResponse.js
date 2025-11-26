@@ -347,18 +347,18 @@ export async function scoreResponses({
 export default {
   scoreResponses,
 };
-scoring.js
+// scoring.js
 
-Strict scoring pipeline using Gemini (v1beta generateContent).
-- Prechecks to avoid LLM being lenient on "not an answer" responses.
-- Calls Gemini for high-quality scoring when the response passes prechecks.
-- Fallback lexical scorer is stricter than before.
+// Strict scoring pipeline using Gemini (v1beta generateContent).
+// - Prechecks to avoid LLM being lenient on "not an answer" responses.
+// - Calls Gemini for high-quality scoring when the response passes prechecks.
+// - Fallback lexical scorer is stricter than before.
 
-Usage:
-  import { scoreResponses } from './scoring.js';
-  const scored = await scoreResponses({ ordered, DEBUG: true });
+// Usage:
+//   import { scoreResponses } from './scoring.js';
+//   const scored = await scoreResponses({ ordered, DEBUG: true });
 
-------------------
+// ------------------
 
 // import { config } from "dotenv";
 // import path from "path";
