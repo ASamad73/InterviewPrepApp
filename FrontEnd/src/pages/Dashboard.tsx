@@ -142,21 +142,36 @@ export default function Dashboard() {
         ) : (
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {interviews.map((it) => (
-              <Link
+              <div
                 key={it.id}
-                to={`/interview/${it.id}`}
                 className="group rounded-lg border border-white/10 bg-[#0e0e0e] p-5 transition hover:border-emerald-500/30 hover:shadow-[0_0_0_1px_rgba(62,207,142,0.2)]"
               >
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-medium text-white group-hover:text-emerald-300">{it.title}</h2>
-                  <span className="text-xs uppercase tracking-wide text-gray-400">{it.status}</span>
-                </div>
-                <p className="mt-1 text-sm text-gray-300">
-                  {it.company} • {it.role}
-                </p>
-                {/* <p className="mt-2 text-xs text-gray-400">{new Date(it.date).toLocaleString()}</p> */}
-                <p className="mt-2 text-xs text-gray-400">{formatDate(it.date)}</p>
-              </Link>
+                <Link to={`/interview/${it.id}`}>
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-lg font-medium text-white group-hover:text-emerald-300">{it.title}</h2>
+                    <span className="text-xs uppercase tracking-wide text-gray-400">{it.status}</span>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-300">
+                    {it.company} • {it.role}
+                  </p>
+                  <p className="mt-2 text-xs text-gray-400">{formatDate(it.date)}</p>
+                </Link>
+
+                {/* Feedback button for completed interviews */}
+                {it.status === 'completed' && (
+                  <div className="mt-4 pt-4 border-t border-white/10">
+                    <Link
+                      to={`/feedback/${it.id}`}
+                      className="inline-flex items-center gap-2 rounded-md bg-emerald-500/10 px-3 py-2 text-sm font-medium text-emerald-300 transition hover:bg-emerald-500/20"
+                    >
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      View Feedback Report
+                    </Link>
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         )}
