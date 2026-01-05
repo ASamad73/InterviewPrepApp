@@ -40,11 +40,14 @@ export default function Dashboard() {
       try {
         const token = isSignedIn ? await getToken({ template: "interview-backend" }) : null;
         const headers: HeadersInit = { 'Content-Type': 'application/json' };
+        // const headers: HeadersInit = {};
         if (token) headers.Authorization = `Bearer ${token}`;
-
+        
         // 1) Try fetching questions
+        console.log('about to fetch');
         let res = await fetch(`${API_URL}/api/interviews/extract-qas`, { headers });
-
+        console.log('Questions successfully');
+      
         // 2) If no content or server error, try import ONCE
         if (!res.ok && [204, 404, 500].includes(res.status) && !importInProgress) {
           importInProgress = true;
@@ -63,7 +66,10 @@ export default function Dashboard() {
         }
 
         if (res.ok) {
+          console.log('Questions fetched successfully');
           const data = await res.json();
+          console.log('Raw fetched data:', data.length ? data[0] : 'No data');
+          console.log('Fetched questions:', data.slice(0, 3)); // log first 3 for brevity
           if (!isMounted) return;
           setQuestions(Array.isArray(data) ? data : []);
         } else {

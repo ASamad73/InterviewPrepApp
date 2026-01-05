@@ -8,6 +8,7 @@ export default function CreateInterview(): JSX.Element {
   const { isLoaded, isSignedIn, getToken } = useAuth();
 
   const [jobTitle, setJobTitle] = useState<string>("");
+  const [jobLevel, setJobLevel] = useState<string>("");
   const [company, setCompany] = useState<string>("");
   const [jobDescription, setJobDescription] = useState<string>("");
 
@@ -22,7 +23,7 @@ export default function CreateInterview(): JSX.Element {
     setError(null);
 
     // Basic client-side validation
-    if (!jobTitle.trim() || !company.trim() || !jobDescription.trim()) {
+    if (!jobTitle.trim() || !jobLevel.trim() || !company.trim() || !jobDescription.trim()) {
       setError("Please fill in Job Title, Company and Job Description.");
       return;
     }
@@ -50,7 +51,7 @@ export default function CreateInterview(): JSX.Element {
       const res = await fetch(`${import.meta.env.VITE_API_URL}/api/interviews/save-parameters`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ jobTitle, company, jobDescription }),
+        body: JSON.stringify({ jobTitle, jobLevel, company, jobDescription }),
       });
 
       // Read response body even on non-ok so we can show helpful message
@@ -76,7 +77,7 @@ export default function CreateInterview(): JSX.Element {
 
       if (interviewId) {
         navigate("/interview-summary", {
-          state: { id: interviewId, jobTitle, company, description: jobDescription },
+          state: { id: interviewId, jobTitle, jobLevel, company, description: jobDescription },
         });
       } else {
         setError("Error in creating interview");
@@ -110,6 +111,25 @@ export default function CreateInterview(): JSX.Element {
               className="w-full rounded-md border border-white/10 bg-[#0b0b0b] px-3 py-2 text-white placeholder-gray-500 outline-none ring-emerald-500/20 focus:ring-2"
               placeholder="Frontend Engineer"
             />
+          </div>
+
+          <div>
+            <label htmlFor="jobLevel" className="mb-1 block text-sm text-gray-300">
+              Job Level
+            </label>
+            <select
+              id="jobLevel"
+              name="jobLevel"
+              value={jobLevel}
+              onChange={(e) => setJobLevel(e.target.value)}
+              className="w-full rounded-md bg-[#0b0b0b] px-3 py-2 text-white outline-none ring-1 ring-white/10 hover:ring-emerald-400/40 focus:ring-2 focus:ring-emerald-500/30 transition"
+              aria-label="Job Level"
+            >
+              <option value="associate">Associate</option>
+              <option value="junior">Junior</option>
+              <option value="mid">Mid</option>
+              <option value="senior">Senior</option>
+            </select>
           </div>
 
           <div>

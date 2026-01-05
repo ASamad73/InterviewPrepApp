@@ -7,6 +7,7 @@ import Hero from '../components/sections/Hero'
 //   question_title: string
 //   question_text: string
 //   answer_text?: string
+//   difficulty_score?: number
 // }
 
 export default function Home(): JSX.Element {
@@ -15,7 +16,7 @@ export default function Home(): JSX.Element {
   // const [loading, setLoading] = useState<boolean>(true)
   // const [error, setError] = useState<string | null>(null)
 
-  // backend base URL - set in frontend .env: VITE_API_URL=http://localhost:8000
+  // // backend base URL - set in frontend .env: VITE_API_URL=http://localhost:8000
   // const API_URL = import.meta.env.VITE_API_URL || ''
 
   // useEffect(() => {
@@ -110,7 +111,6 @@ export default function Home(): JSX.Element {
                 <article key={q.question_id} className="p-4 bg-[#0e0e0e] rounded border border-white/6">
                   <a
                     className="text-emerald-300 font-semibold"
-                    href={q.question_url}
                     target="_blank"
                     rel="noreferrer"
                   >
@@ -118,7 +118,7 @@ export default function Home(): JSX.Element {
                   </a>
                   <p className="text-sm text-gray-300 mt-2">{q.question_text.slice(0, 200)}...</p>
                   <div className="mt-2 text-xs text-gray-400">
-                    Score: {q.question_score} • Views: {q.question_view_count}
+                    DiffiultyScore: {q.difficulty_score}
                   </div>
                 </article>
               ))}

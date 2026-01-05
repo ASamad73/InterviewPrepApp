@@ -24,7 +24,6 @@ const ScoreSchema = new Schema({
   missed_points: { type: [String], default: [] }
 }, { _id: false });
 
-
 const TranscriptSchema = new Schema({
   interviewId: { type: String, required: true, index: true },
   fullTranscript: { type: [UtteranceSchema], default: [] },     // ordered agent/user messages

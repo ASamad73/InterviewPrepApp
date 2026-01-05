@@ -151,15 +151,7 @@
 // server/lib/selectQuestions.js
 import Question from '../models/Question.js'
 
-/**
- * selectQuestions(jobTitle, jobDescription, n)
- * - keeps your current scoring / keyword extraction logic
- * - after choosing candidate ids, immediately confirms which of those ids exist in DB
- *   (handles question_id stored as string or number)
- * - if some selected ids are missing, it fills the remainder from DB-ranked fallback
- * - returns an array of question_id strings (length <= n)
- */
-export async function selectQuestions(jobTitle = '', jobDescription = '', n = 10) {
+export async function selectQuestions(jobTitle = '', jobDescription = '', jobLevel = '', n = 10) {
   const text = `${jobTitle} ${jobDescription}`.toLowerCase()
 
   // === CURATED TECH TERMS & STOPWORDS (unchanged) ===
@@ -266,7 +258,82 @@ export async function selectQuestions(jobTitle = '', jobDescription = '', n = 10
   })
 
   // Select top candidate ids in order
-  let results = scored.map(s => s.doc)
+  // let results = scored.map(s => s.doc)
+  const orderedDocs = scored.map(s => s.doc)
+
+  // Difficulty distributions (map jobLevel inputs to table)
+  const DIFF_DIST = {
+    'associate': [0.35, 0.40, 0.20, 0.05, 0.00],
+    'junior':    [0.20, 0.35, 0.30, 0.10, 0.05],
+    'mid':       [0.10, 0.20, 0.35, 0.25, 0.10],
+    'senior':    [0.05, 0.10, 0.25, 0.35, 0.25]
+  }
+
+  // normalize jobLevel key and pick distribution (default to 'mid' if unknown)
+  const key = String(jobLevel || '').toLowerCase()
+  const percentages = DIFF_DIST[key] || DIFF_DIST['mid']
+
+  // compute raw desired counts and integer allocation (fair rounding)
+  const raw = percentages.map(p => p * n)
+  let counts = raw.map(v => Math.floor(v))
+  let assigned = counts.reduce((a,b) => a + b, 0)
+  let remainder = n - assigned
+
+  if (remainder > 0) {
+    // compute fractional parts and assign remainder to largest fractions
+    const fractions = raw.map((v, i) => ({ idx: i, frac: v - Math.floor(v) }))
+    fractions.sort((a,b) => b.frac - a.frac)
+    for (let i = 0; i < remainder; i++) {
+      counts[fractions[i].idx]++
+    }
+  }
+
+  // safety: if rounding overshot, trim from highest-index (rare)
+  while (counts.reduce((a,b)=>a+b,0) > n) {
+    for (let i = counts.length - 1; i >= 0 && counts.reduce((a,b)=>a+b,0) > n; i--) {
+      if (counts[i] > 0) counts[i]--
+    }
+  }
+
+  // Build buckets of docs by difficulty (preserve original order)
+  const byDiff = { 1: [], 2: [], 3: [], 4: [], 5: [] }
+  for (const doc of orderedDocs) {
+    const ds = Number(doc.difficulty_score)
+    const lvl = (Number.isFinite(ds) && ds >= 1 && ds <= 5) ? ds : 3 // fallback to mid
+    byDiff[lvl].push(doc)
+  }
+
+  // pick from each bucket up to counts[level-1], preserving order
+  const selected = []
+  const usedIds = new Set()
+  for (let level = 1; level <= 5; level++) {
+    const need = counts[level - 1] || 0
+    const bucket = byDiff[level] || []
+    for (let i = 0; i < bucket.length && selected.length < n && (i < need); i++) {
+      const doc = bucket[i]
+      const idStr = String(doc.question_id)
+      if (!usedIds.has(idStr)) {
+        selected.push(doc)
+        usedIds.add(idStr)
+      }
+    }
+  }
+
+  // If some levels lacked enough docs, fill remaining slots from orderedDocs (preserve order)
+  if (selected.length < n) {
+    for (const doc of orderedDocs) {
+      if (selected.length >= n) break
+      const idStr = String(doc.question_id)
+      if (!usedIds.has(idStr)) {
+        selected.push(doc)
+        usedIds.add(idStr)
+      }
+    }
+  }
+
+  // If still short (unlikely), add top-ranked fallback later as before
+  let results = selected.slice(0, n)
+
   // If not enough, add top-ranked fallback from DB (exclude chosen)
   if (results.length < n) {
     const need = n - results.length
@@ -277,6 +344,26 @@ export async function selectQuestions(jobTitle = '', jobDescription = '', n = 10
       .lean()
     results = results.concat(fallback)
   }
+
+  // --- DIFFICULTY VERIFICATION LOG ---
+  const diffCount = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+
+  for (const q of results) {
+    const d = Number(q.difficulty_score)
+    const level = (Number.isFinite(d) && d >= 1 && d <= 5) ? d : 'missing'
+    diffCount[level] = (diffCount[level] || 0) + 1
+  }
+
+  console.log('selectQuestions difficulty distribution:', diffCount)
+  console.log(
+    'selectQuestions difficulty list:',
+    results.map(q => ({
+      id: q.question_id,
+      difficulty: q.difficulty_score ?? 'missing',
+      title: q.question_title
+    }))
+  )
+  // --- DIFFICULTY VERIFICATION LOG ENDED---
 
   // Now we have an ordered array of question docs, but we will return only
   // question_id values that we verify exist in the DB (handle mixed types)

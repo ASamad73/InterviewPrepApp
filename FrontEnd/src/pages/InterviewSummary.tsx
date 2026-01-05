@@ -10,9 +10,10 @@ type LocationState = {
 };
 
 type QuestionItem = {
-  question_id: number;
-  question_title: string;
-  question_text: string;
+    question_id: number;
+    question_title: string;
+    question_text: string;
+    difficulty_score: number;
 };
 
 export default function InterviewSummary(): JSX.Element {
@@ -41,6 +42,15 @@ export default function InterviewSummary(): JSX.Element {
     const [overallScore, setOverallScore] = useState<number | null>(null);
     const [scoreLoading, setScoreLoading] = useState(false);
 
+    // --- question sampling / difficulty state (new) ---
+    const [questionBuckets, setQuestionBuckets] = useState<Record<number, QuestionItem[]>>({
+    1: [], 2: [], 3: [], 4: [], 5: []
+    });
+    const [samplingPlan, setSamplingPlan] = useState<number[]>([]);
+    const [extrasList, setExtrasList] = useState<QuestionItem[]>([]);
+    const [totalToAsk, setTotalToAsk] = useState<number>(0);
+    const [targetCounts, setTargetCounts] = useState<Record<number, number>>({});
+    const [availability, setAvailability] = useState<Record<number, { available: number; target: number }>>({});
 
     const scriptRef = useRef<HTMLScriptElement | null>(null);
     const widgetRef = useRef<HTMLElement | null>(null);
@@ -105,14 +115,78 @@ export default function InterviewSummary(): JSX.Element {
             const headers = await getAuthHeaders();
             const res = await fetch(`${API}/api/interviews/${id}/questions`, { method: "GET", headers });
             const body = await res.json().catch(() => null);
-            
+
             if (!res.ok) {
                 throw new Error(body?.message || `Failed to fetch questions (${res.status})`);
             }
+
+            // --- Handle new enriched response shape (preferred) ---
+            if (body && Array.isArray(body.samplingPlan) && body.buckets) {
+                // buckets may have string keys '1'..'5' or numeric keys; normalize to numeric keys
+                const rawBuckets = body.buckets || {};
+                const normalizedBuckets: Record<number, any[]> = {1: [],2: [],3: [],4: [],5: []};
+                for (let lvl = 1; lvl <= 5; lvl++) {
+                    const maybe = rawBuckets[lvl] ?? rawBuckets[String(lvl)] ?? [];
+                    normalizedBuckets[lvl] = Array.isArray(maybe) ? maybe : [];
+                }
+
+                // set frontend state for later sampling
+                setQuestionBuckets(normalizedBuckets);
+                setSamplingPlan(Array.isArray(body.samplingPlan) ? body.samplingPlan : []);
+                setExtrasList(Array.isArray(body.extras) ? body.extras : []);
+                setTotalToAsk(Number(body.totalToAsk ?? body.totalToAsk ?? (body.samplingPlan?.length ?? 0)));
+                setTargetCounts(body.targetCounts ?? {});
+                setAvailability(body.availability ?? { 1:{available: normalizedBuckets[1].length, target: (body.targetCounts?.[1] ?? 0) },
+                                                        2:{available: normalizedBuckets[2].length, target: (body.targetCounts?.[2] ?? 0) },
+                                                        3:{available: normalizedBuckets[3].length, target: (body.targetCounts?.[3] ?? 0) },
+                                                        4:{available: normalizedBuckets[4].length, target: (body.targetCounts?.[4] ?? 0) },
+                                                        5:{available: normalizedBuckets[5].length, target: (body.targetCounts?.[5] ?? 0) } });
+
+                // answers map (if provided)
+                const receivedAnswers = body.answersMap ?? {};
+                const normalized: Record<string, string> = {};
+                for (const k of Object.keys(receivedAnswers)) {
+                    normalized[String(k)] = String(receivedAnswers[k] ?? '');
+                }
+                setAnswersMap(normalized);
+
+                // Return a flattened array for backward-compatible widget building:
+                // preserve bucket ordering so the widget gets a predictable pool
+                
+                const flattened: QuestionItem[] = [];
+                for (let lvl = 1; lvl <= 5; lvl++) {
+                    const items = normalizedBuckets[lvl] ?? [];
+                    for (const it of items) {
+                    // ensure shape matches QuestionItem (id/title/text); if server already returns that shape, fine
+                        flattened.push({
+                            question_id: Number(it.question_id ?? it.id),
+                            question_title: String(it.question_title ?? it.title ?? ''),
+                            question_text: String(it.question_text ?? it.text ?? it.question ?? ''),
+                            difficulty_score: Number(it.difficulty_score ?? lvl),
+                        });
+                    }
+                }
+                // append extras (ordered fallback) at the end (if any)
+                if (Array.isArray(body.extras)) {
+                    for (const it of body.extras) {
+                    flattened.push({
+                        question_id: Number(it.question_id ?? it.id),
+                        question_title: String(it.question_title ?? it.title ?? ''),
+                        question_text: String(it.question_text ?? it.text ?? it.question ?? ''),
+                        difficulty_score: Number(it.difficulty_score ?? 3),
+                    });
+                    }
+                }
+
+                return flattened;
+            }
+
+            // --- Fallback: legacy response (old format) ---
             if (!body || !Array.isArray(body.questions)) {
                 throw new Error("Invalid response for questions");
             }
 
+            // normalize answers as before
             const receivedAnswers = body.answersMap ?? {};
             const normalized: Record<string, string> = {};
             for (const k of Object.keys(receivedAnswers)) {
@@ -120,7 +194,26 @@ export default function InterviewSummary(): JSX.Element {
             }
             setAnswersMap(normalized);
 
+            // after you get body.samplingPlan and buckets
+            const resp = await fetch(`${API}/api/interviews/${id}/init-sampling`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    samplingPlan: body.samplingPlan,
+                    buckets: body.buckets,
+                    extras: body.extras || [],
+                    totalToAsk: body.totalToAsk
+                })
+            });
+
+            const anotherBody = await resp.json().catch(() => null);
+            if(!resp.ok){
+                throw new Error(anotherBody?.message || `Failed to fetch questions (${resp.status})`);
+            }
+
+            // return legacy list
             return body.questions;
+
         } catch (err: any) {
             console.error("fetchSelectedQuestions error", err);
             setError(err?.message || "Failed to load questions");
@@ -130,19 +223,21 @@ export default function InterviewSummary(): JSX.Element {
         }
     }
 
-    function buildWidgetContext(qs: QuestionItem[]) {
-        // Build the system/runtime instruction (concise but strict)
-        const questionTexts = (qs || []).map((q) => ({
-            id: q.question_id ?? (q as any).id ?? null,
-            title: q.question_title ?? (q as any).title ?? '',
-            text: q.question_text ?? (q as any).text ?? (q as any).question ?? '',
-        })).filter(q => q.id != null); // drop any malformed entries
+    function buildWidgetContext(qs: QuestionItem[], currentQuestion: QuestionItem | null) {
+        // Build cleaned list and include difficulty if present
+        // const questionTexts = (qs || []).map((q) => ({
+        //     id: q.question_id ?? (q as any).id ?? null,
+        //     title: q.question_title ?? (q as any).title ?? '',
+        //     text: q.question_text ?? (q as any).text ?? (q as any).question ?? '',
+        //     difficulty: Number((q as any).difficulty_score ?? (q as any).difficulty ?? 3)
+        // })).filter(q => q.id != null);
 
-        const questionsList = questionTexts.map((q, index) => 
-            `${index + 1}. ${q.title} (ID: ${q.id}): ${q.text}`
-        ).join('\n');
+        // // include difficulty in the question list for transparency
+        // const questionsList = questionTexts.map((q, index) => 
+        //     `${index + 1}. ${q.title} (ID: ${q.id}, difficulty: ${q.difficulty}): ${q.text}`
+        // ).join('\n');
 
-        console.log('Prepared questions for widget context:', questionTexts.slice(0,3));
+        // console.log('Prepared questions for widget context:', questionTexts.slice(0,3));
 
         const fullSystemPrompt = `
             You are an automated interview agent used only to run recorded mock technical interviews. Follow these rules exactly.
@@ -151,31 +246,34 @@ export default function InterviewSummary(): JSX.Element {
             e.g. “Thank you for joining. May I begin the interview now?” Wait for an explicit affirmative 
             (“yes”, “please start”, “go ahead”, “sure”). If the candidate’s first reply is not explicit, ask once more. Proceed only after explicit permission.
             
-            2) Authority of questions — You MUST ONLY ask the following questions in order. Do not invent, add, expand, ask about the 
-            job title, company, available roles, or anything outside these questions:
-            
-            ${questionsList}
-            
-            3) Asking & waiting — For each question: ask it exactly and concisely, then wait for the candidate’s spoken answer before moving on.
+            2) Authority of questions — You MUST ONLY ask the single question provided to you for the current turn.
+            The orchestrator will provide exactly one question as ${currentQuestion} (with fields 'question_id' and 'question_text'). This is the question you must ask now. This applies to the first question of the interview and to every subsequent question.
+            After you complete a question and save the response, the orchestrator will explicitly provide the next ${currentQuestion} in sequence. Do not assume, predict, or iterate through questions on your own.
 
-            4) Clarification — If the candidate’s answer is very short, unclear, or incomplete, ask at most one short clarifying follow-up. 
-            If that follow-up still yields an inadequate answer, accept it and move to the next question.
+            3) Asking & waiting — For the current question: ask it exactly and concisely (use '${currentQuestion?.question_text ?? "[NO_QUESTION_PROVIDED]"}'), then wait for the candidate’s spoken answer before moving on.
 
-            5) Skipping — If the candidate says “skip” or “pass”, acknowledge briefly (“Okay, skipping that question.”) and move on. 
-            Allow returning to a skipped question only if the candidate explicitly asks to return after the remaining questions are completed.
+            4) Clarification — Do not ask clarifying questions on your own. Always accept whatever the candidate says as their final answer for the 
+            current question (even if it is short, unclear, or incomplete). Immediately proceed to save that response via the save tool (per Rule 6).
+
+            5) Skipping — If the candidate says “skip” or “pass”, acknowledge briefly (“Okay, skipping that question.”) and stop further questioning for this question. 
+            Allow returning to a skipped question only if the orchestrator later supplies that question again explicitly.
             
-            6) Persistence — After receiving the full answer to each question (including any clarification or skip, and handling any interruptions by 
-            combining partial utterances into a complete response), call the 'save_question_transcript' tool with parameters: question_id (the ID from the list) 
-            and transcript (the candidate's full spoken answer as a single string).
+            6) Persistence & tool call — After receiving the candidate’s spoken answer for the current question (including any short interruptions or fragments), combine all 
+            speech segments for that question into one coherent string, then invoke the save_question_transcript tool exactly once with parameters: question_id (from ${currentQuestion}) 
+            and transcript (the candidate's full spoken answer as one string). Call this tool immediately after the candidate finishes speaking for the current question—do not wait for or 
+            assume any scoring outcome. After invoking the tool, wait for the orchestrator to supply the next instruction (next question, a clarification to ask, or END_INTERVIEW).
             
-            7) Ending the interview — After receiving and acknowledging the answer to the last question (including any clarification), 
-            immediately say exactly: “Interview complete. Thank you for your time.” Do not ask additional questions or continue the conversation. 
-            End the session.
-            
+            7) Wait for orchestration instruction — **After calling 'save_question_transcript', do not ask another question or continue the interview.** Wait for the orchestrator/backend to supply 
+            the next '${currentQuestion}' (or an explicit termination command). Only after you receive the next question object from the orchestrator should you proceed to ask it. If the orchestrator 
+            instead sends an explicit “END_INTERVIEW” instruction, say exactly: “Interview complete. Thank you for your time.” and terminate the session.
+
+            8) Ending the interview — If you have been given the last question and have received and acknowledged its final answer (including any clarification), follow rule 6 to save, 
+            then say exactly: “Interview complete. Thank you for your time.” Do not ask additional questions or continue the conversation.
+
             IMPORTANT: Do not prompt for job info, role summary, or anything else outside the provided questions.
             `;
             
-            console.log('Building widget with embedded prompt:', { fullSystemPrompt, questionsList });
+            // console.log('Building widget with embedded prompt:', { fullSystemPrompt, questionsList });
         // 6) Webhook / persistence — If webhook/event hooks are configured for the embed, emit an event at the end of each question 
         // turn with the candidate’s transcript and the question id. Also emit a final “interview.finished” event when done. 
         // (This is informational. The embed platform will send webhooks — ensure your server endpoint accepts them.)
@@ -391,7 +489,8 @@ export default function InterviewSummary(): JSX.Element {
             setError("No questions selected for this interview.");
             return;
         }
-        const { fullSystemPrompt } = buildWidgetContext(qs);
+        const firstQuestion = (qs && qs.length > 0) ? qs[0] : null;
+        const { fullSystemPrompt } = buildWidgetContext(qs, firstQuestion);
         await loadAndMountWidget(fullSystemPrompt, qs);
         setInterviewStarted(true);
         

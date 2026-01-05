@@ -22,6 +22,11 @@ const InterviewSchema = Schema({
   status: { type: String, enum: ['scheduled','in-progress','completed','archived'], default: 'draft' },
   selectedQuestions: { type: [String], default: [], require: true }, 
   date: { type: Date, default: () => new Date() },
+
+  samplingPlan: { type: [Number], default: [] },   // e.g. [1,3,2,3,...]
+  buckets: { type: Schema.Types.Mixed, default: {} }, // {1:[question objects],2:[]...}
+  extras: { type: [Schema.Types.Mixed], default: [] }, // ordered fallback
+  currentPlanIndex: { type: Number, default: 0 }, // which index has been served
 }, { timestamps: true })
 
 export default mongoose.model('Interview', InterviewSchema)

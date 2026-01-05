@@ -80,7 +80,6 @@ router.get('/user/stats', async (req, res) => {
   }
 });
 
-
 router.post('/import-qas', async (req, res) => {
   try {
     // Path to paraphrased_qas.json in BackEnd/
@@ -166,14 +165,15 @@ router.post('/save-parameters', async (req, res) => {
 
     
     // === INPUT VALIDATION ===
-    const { jobTitle, company, jobDescription } = req.body ?? {};
-    if (!jobTitle?.trim() || !company?.trim() || !jobDescription?.trim()) {
+    const { jobTitle, jobLevel, company, jobDescription } = req.body ?? {};
+    if (!jobTitle?.trim() || !jobLevel?.trim() || !company?.trim() || !jobDescription?.trim()) {
       return res.status(400).json({ ok: false, message: 'Missing required fields' });
     }
 
     // const num_questions = 10;
     const num_questions = 2;
-    const selectedIds = await selectQuestions(jobTitle, jobDescription, num_questions);
+    const questions_pool = num_questions * 3;
+    const selectedIds = await selectQuestions(jobTitle, jobLevel, jobDescription, questions_pool);
 
     const selectedIdsRaw = selectedIds; // may be numbers or strings
     console.log('Selected IDs (raw):', selectedIdsRaw);
@@ -247,6 +247,7 @@ router.post('/save-parameters', async (req, res) => {
       question_id: q.question_id,                    // Already String
       question_title: q.question_title ?? '',
       question_text: q.question_text ?? '',
+      difficulty_score: q.difficulty_score || null,
       answer_text: q.answer_text ?? '',
       createdAt: new Date(),
     }));
@@ -254,7 +255,7 @@ router.post('/save-parameters', async (req, res) => {
     // Save selectedQuestions as String[] — matches schema
     const interviewDoc = new Interview({
       owner,
-      parameters: { jobTitle, company, jobDescription },
+      parameters: { jobTitle, jobLevel, company, jobDescription },
       selectedQuestions: selectedIdsStr,             // String[]
       answers: preFilledAnswers,
       currentIndex: 0,
@@ -307,6 +308,15 @@ router.get('/:id/questions', async (req, res) => {
 
     console.log('Interview found. selectedQuestions:', interview.selectedQuestions);
 
+    const jobLevel = interview.parameters?.jobLevel || 'mid';
+    
+    const DIFF_DIST = {
+      'associate': [0.35, 0.40, 0.20, 0.05, 0.00],
+      'junior':    [0.20, 0.35, 0.30, 0.10, 0.05],
+      'mid':       [0.10, 0.20, 0.35, 0.25, 0.10],
+      'senior':    [0.05, 0.10, 0.25, 0.35, 0.25]
+    }
+    
     // selectedQuestions is already String[] — use directly!
     const ids = (Array.isArray(interview.selectedQuestions) 
       ? interview.selectedQuestions 
@@ -324,30 +334,142 @@ router.get('/:id/questions', async (req, res) => {
     }).lean();
 
     console.log(`Found ${docs.length} question docs`);
+    
+    // --- ORGANIZE BY DIFFICULTY & BUILD SAMPLING PLAN ---
 
-    const idToDoc = new Map(docs.map(d => [d.question_id, d]));
+    // How many questions we intend to ask in the interview
+    const totalToAsk  = docs.length / 3;
+    console.log(`Preparing sampling plan for totalToAsk = ${totalToAsk} questions`);
 
-    const ordered = ids.map(id => {
-      const doc = idToDoc.get(id);
-      if (!doc) return null;
-      return {
-        question_id: doc.question_id,
-        question_title: doc.question_title || '',
-        question_text: doc.question_text || '',
-      };
-    }).filter(Boolean);
+    // Build map id -> doc (already present)
+    const idToDoc = new Map(docs.map(d => [String(d.question_id), d]));
 
-    const answersMap = {};
-    docs.forEach(q => {
-      answersMap[q.question_id] = q.answer_text ?? '';
+    // Minimal view object maker (keeps payload small)
+    const makeView = (doc) => ({
+      question_id: doc.question_id,
+      question_title: doc.question_title || '',
+      question_text: doc.question_text || '',
+      difficulty_score: doc.difficulty_score ?? null
     });
 
-    return res.json({ ok: true, questions: ordered, answersMap });
+    // Group docs into buckets by difficulty (fallback to 3 if missing)
+    const buckets = { 1: [], 2: [], 3: [], 4: [], 5: [] };
+    for (const doc of docs) {
+      const ds = Number(doc.difficulty_score);
+      const lvl = (Number.isFinite(ds) && ds >= 1 && ds <= 5) ? ds : 3;
+      buckets[lvl].push(makeView(doc));
+    }
+
+    // Compute target percentages for this job level (fallback to 'mid' if unknown)
+    const key = String(jobLevel || '').toLowerCase();
+    const percentages = DIFF_DIST[key] || DIFF_DIST['mid'];
+
+    // Compute integer target counts using fair rounding
+    const rawCounts = percentages.map(p => p * totalToAsk);
+    let targetCounts = rawCounts.map(v => Math.floor(v));
+    let assigned = targetCounts.reduce((a,b) => a + b, 0);
+    let remainder = totalToAsk - assigned;
+    if (remainder > 0) {
+      const fracs = rawCounts.map((v, i) => ({ i, frac: v - Math.floor(v) }));
+      fracs.sort((a,b) => b.frac - a.frac);
+      for (let i = 0; i < remainder; i++) targetCounts[fracs[i].i]++;
+    }
+    // safety trim
+    while (targetCounts.reduce((a,b)=>a+b,0) > totalToAsk) {
+      for (let i = targetCounts.length-1; i >= 0 && targetCounts.reduce((a,b)=>a+b,0) > totalToAsk; i--) {
+        if (targetCounts[i] > 0) targetCounts[i]--;
+      }
+    }
+
+    // Build samplingPlan (array of difficulty levels, shuffled to avoid blocky pattern)
+    let plan = [];
+    for (let lvl = 1; lvl <= 5; lvl++) {
+      for (let i = 0; i < (targetCounts[lvl-1] || 0); i++) plan.push(lvl);
+    }
+    // shuffle plan for randomness but keep distribution intact
+    for (let i = plan.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [plan[i], plan[j]] = [plan[j], plan[i]];
+    }
+
+    // Build availability summary (how many in each bucket)
+    const availability = {};
+    for (let lvl = 1; lvl <= 5; lvl++) {
+      availability[lvl] = {
+        available: buckets[lvl].length,
+        target: targetCounts[lvl-1] ?? 0
+      };
+    }
+
+    // Prepare answersMap (as before)
+    const answersMap = {};
+    docs.forEach(q => {
+      answersMap[String(q.question_id)] = q.answer_text ?? '';
+    });
+
+    // Prepare a small ordered array (original order by ids) if frontend needs initial ordering
+    const ordered = ids.map(id => {
+      const doc = idToDoc.get(String(id));
+      if (!doc) return null;
+      return makeView(doc);
+    }).filter(Boolean);
+
+    console.log('Prepared sampling plan and buckets for interview questions');
+    console.log("Bucket: ", buckets);
+    console.log("Plan: ", plan);
+
+    // Return enriched structure for frontend sampling
+    return res.json({
+      ok: true,
+      totalToAsk,
+      jobLevel,
+      samplingPlan: plan,          // e.g. [1,2,1,3,3,...] length == totalToAsk
+      targetCounts: {
+        1: targetCounts[0] || 0,
+        2: targetCounts[1] || 0,
+        3: targetCounts[2] || 0,
+        4: targetCounts[3] || 0,
+        5: targetCounts[4] || 0
+      },
+      availability,                // current counts per bucket
+      buckets,                     // actual questions grouped by difficulty: {1:[...],2:[...],...}
+      extras: ordered,             // linear list in original order (fallback)
+      answersMap
+    });
+
+    // const idToDoc = new Map(docs.map(d => [d.question_id, d]));
+
+    // const ordered = ids.map(id => {
+    //   const doc = idToDoc.get(id);
+    //   if (!doc) return null;
+    //   return {
+    //     question_id: doc.question_id,
+    //     question_title: doc.question_title || '',
+    //     question_text: doc.question_text || '',
+    //   };
+    // }).filter(Boolean);
+
+    // const answersMap = {};
+    // docs.forEach(q => {
+    //   answersMap[q.question_id] = q.answer_text ?? '';
+    // });
+
+    // return res.json({ ok: true, questions: ordered, answersMap });
 
   } catch (err) {
     console.error('GET /:id/questions error', err);
     return res.status(500).json({ ok: false, error: String(err) });
   }
 });
+
+// POST /api/interviews/:id/init-sampling
+router.post('/:id/init-sampling', async (req, res) => {
+  const { samplingPlan, buckets, extras, totalToAsk } = req.body;
+  await Interview.updateOne({ interviewId: req.params.id }, {
+    $set: { samplingPlan, buckets, extras, totalToAsk, currentPlanIndex: 0 }
+  });
+  return res.json({ ok: true });
+});
+
 
 export default router

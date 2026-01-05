@@ -27,6 +27,8 @@ io.on("connection", (socket) => {
 const PORT = process.env.PORT || 8000;
 const MONGO_URL = process.env.MONGO_URL;
 
+// near top of server.js, after startServer() or before server.listen(...)
+
 async function startServer() {
   try {
     await mongoose.connect(MONGO_URL);

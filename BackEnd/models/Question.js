@@ -27,7 +27,8 @@ const questionSchema = new Schema({
   question_text: { type: String, required: true },
   answer_text: { type: String, required: true },
   tags: { type: [String], default: [] },
-  rank_value: { type: Number, default: 0, index: true }
+  rank_value: { type: Number, default: 0, index: true },
+  difficulty_score: { type: Number, min: 1, max: 5 }
 },{ timestamps: true });
 
 questionSchema.index({ question_id: 1 }, { unique: true, sparse: true });

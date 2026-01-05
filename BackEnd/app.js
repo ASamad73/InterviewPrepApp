@@ -9,7 +9,10 @@ import agentRoutes from "./routes/agentRoutes.js";
 export const app = express();
 
 app.use(cors({
-  origin: ['http://localhost:5173', 'https://ai-interviewprepapp.netlify.app'],
+  origin: [
+    'http://localhost:5173',
+    'https://ai-interviewprepapp.netlify.app',
+  ],
   credentials: true,
 }));
 
@@ -19,16 +22,7 @@ app.use(bodyparser.json({
     req.rawBody = buf;
   }
 }));
-// app.use(express.json());
+// app.use(express.json()); 
 
-// app.use(express.json({
-//   verify: (req, res, buf) => {
-//     req.rawBody = buf.toString();
-//   }
-// }));
-// app.use(bodyparser.json());
-
-// app.use(clerkMiddleware());
-// app.use('/api', authMiddleware());
 app.use('/api/interviews', interviwewRoutes);
 app.use('/api/webhooks', agentRoutes);

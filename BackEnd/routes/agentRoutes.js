@@ -182,38 +182,66 @@ router.post('/:id/register-conversation', async (req, res) => {
   }
 });
 
-
 router.post("/save-question", verifyWebhook, async (req, res) => {
   try {
-    console.log("HEADER: ", req.headers);
-    const body = req.body || {};
-    const parameters = body.parameters || body.input || body.data || {};
-    const metadata = body.metadata || {};
-    const interviewId = metadata?.interviewId || body?.interviewId || body?.metadata?.interviewId;
-    const rawQ = parameters?.question_id ?? parameters?.questionId ?? parameters?.id;
-    const transcriptText = parameters?.transcript ?? parameters?.text ?? parameters?.answer ?? body?.transcript;
+    console.log("save-question webhook called");
+    const payload = req.body || {};
+    console.log("Payload: ", payload);
 
-    console.log("SAVING QUESTION IN BACKEND")
+    const data = payload.data || {};
+    // Use the same interviewId extraction as post-call-transcript:
+    const interviewId = data?.conversation_initiation_client_data?.dynamic_variables?.interviewId ||
+                        payload?.metadata?.interviewId || payload?.interviewId || null;
+
+    // parameters (tool inputs) - keep same keys you've used before
+    const parameters = payload.parameters ?? payload.input ?? payload.data ?? {};
+
+    // question id: same fallback keys you previously used
+    const rawQ = parameters?.question_id ?? parameters?.questionId ?? parameters?.id ?? null;
+
+    // Extract transcript segments from payload.data.transcript (same normalization as post-call-transcript)
+    const rawTranscript = data?.transcript ?? payload?.transcript ?? null;
+    const transcriptArr = Array.isArray(rawTranscript)
+      ? rawTranscript
+      : (rawTranscript ? [rawTranscript] : []);
+
+    // normalize segments into one string (use same keys as post-call-transcript)
+    const cleanedParts = transcriptArr.map((m) => {
+      if (!m) return null;
+      if (typeof m === 'string') return m.trim();
+      return String(m.text ?? m.content ?? m.message ?? m.transcript ?? '').trim();
+    }).filter(Boolean);
+
+    const transcriptText = cleanedParts.join(' ').trim();
+
+    console.log('save-question called; interviewId:', interviewId, 'rawQ:', rawQ);
+    console.log('transcript snippet:', transcriptText.slice(0, 120));
 
     if (!interviewId || !rawQ || !transcriptText) {
-      return res.status(400).json({ ok: false, message: "Missing interviewId, question_id or transcript" });
+      const missing = [];
+      if (!interviewId) missing.push('interviewId');
+      if (!rawQ) missing.push('question_id');
+      if (!transcriptText) missing.push('transcript');
+      return res.status(400).json({ ok: false, message: `Missing ${missing.join(', ')}` });
     }
 
-    console.log("saving question id: ", interviewId, rawQ);
-    console.log("transcript text:", transcriptText?.slice(0, 100));
-
     const qid = String(rawQ);
-    const tdoc = await ensureTranscriptDoc(interviewId, body);
 
-    await pushUtterance(tdoc, "user", transcriptText, { source: "tool" });
-    const perQ = await upsertPerQuestion(tdoc, qid, [{ role: "user", text: transcriptText, timestamp: new Date() }]);
+    // Reuse your existing helper to get/create the transcript doc
+    const tdoc = await ensureTranscriptDoc(interviewId, payload);
 
+    // upsert per-question aggregated entry (uses your helper, merges into combined_text)
+    const perQ = await upsertPerQuestion(tdoc, qid, [{ role: 'user', text: transcriptText, timestamp: new Date() }]);
+
+    // respond with saved combined_text so caller can confirm
     return res.status(200).json({ ok: true, saved: true, question_id: qid, combined_text: perQ.combined_text });
+
   } catch (err) {
-    console.error("save-question webhook error:", err);
+    console.error('save-question webhook error:', err);
     return res.status(500).json({ ok: false, error: String(err) });
   }
 });
+
 
 router.post("/finish-interview", verifyWebhook, async (req, res) => {
   try {
