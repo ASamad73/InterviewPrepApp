@@ -182,6 +182,14 @@ router.post('/:id/register-conversation', async (req, res) => {
   }
 });
 
+router.post('/save-question-debug', (req, res) => {
+  console.log('>>> SAVE-QUESTION-DEBUG HIT');
+  console.log('headers:', req.headers);
+  console.log('body-keys:', Object.keys(req.body || {}));
+  try { console.log('body-snippet:', JSON.stringify(req.body).slice(0,2000)); } catch(e){}
+  res.json({ ok: true, debug: true });
+});
+
 router.post("/save-question", verifyWebhook, async (req, res) => {
   try {
     console.log("save-question webhook called");
