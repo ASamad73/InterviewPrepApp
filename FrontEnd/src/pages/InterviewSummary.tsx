@@ -159,7 +159,7 @@ export default function InterviewSummary(): JSX.Element {
                     for (const it of items) {
                     // ensure shape matches QuestionItem (id/title/text); if server already returns that shape, fine
                         flattened.push({
-                            question_id: Number(it.question_id ?? it.id),
+                            question_id: Number(it.question_id ?? it.id ?? ''),
                             question_title: String(it.question_title ?? it.title ?? ''),
                             question_text: String(it.question_text ?? it.text ?? it.question ?? ''),
                             difficulty_score: Number(it.difficulty_score ?? lvl),

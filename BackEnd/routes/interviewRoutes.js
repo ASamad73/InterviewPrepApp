@@ -6,6 +6,8 @@ import Question from "../models/Question.js";
 import Parameter from "../models/Parameter.js";
 import Interview from "../models/Interview.js";
 import { selectQuestions } from "../lib/selectQuestions.js";
+// add near other imports
+import { prepareSamplingPlanAndBuckets, sampleQuestionsFromPlan } from '../lib/sampling.js';
 
 const router = express.Router()
 
@@ -276,191 +278,162 @@ router.post('/save-parameters', async (req, res) => {
     return res.status(500).json({ ok: false, message: 'Server error', error: error.message });
   }
 });
-// router.get('/:id/questions', async (req, res) => {
-//   try {
-//     const interview = await Interview.findById(req.params.id).lean()
-//     if (!interview) return res.status(404).json({ ok: false, message: 'Interview not found' })
 
-//     const ids = Array.isArray(interview.selectedQuestions) ? interview.selectedQuestions : []
-//     if (ids.length === 0) return res.json({ ok: true, questions: [] })
 
-//     const docs = await Question.find({ question_id: { $in: ids } }).lean()
-//     const idToDoc = new Map(docs.map(d => [d.question_id, d]))
-//     const ordered = ids.map(id => idToDoc.get(id)).filter(Boolean)
-//     return res.json({ ok: true, questions: ordered })
-//   } catch (err) {
-//     console.error('GET /:id/questions error', err)
-//     return res.status(500).json({ ok: false, error: String(err) })
-//   }
-// })
 router.get('/:id/questions', async (req, res) => {
   try {
     const param = req.params.id;
     console.log(`Fetching questions for interview: ${param}`);
 
     let interview = await Interview.findOne({ interviewId: param }).lean();
-    if (!interview) {
-      interview = await Interview.findById(param).lean();
-    }
-    if (!interview) {
-      return res.status(404).json({ ok: false, message: 'Interview not found' });
-    }
+    if (!interview) interview = await Interview.findById(param).lean();
+    if (!interview) return res.status(404).json({ ok: false, message: 'Interview not found' });
 
     console.log('Interview found. selectedQuestions:', interview.selectedQuestions);
 
-    const jobLevel = interview.parameters?.jobLevel || 'mid';
-    
-    const DIFF_DIST = {
-      'associate': [0.35, 0.40, 0.20, 0.05, 0.00],
-      'junior':    [0.20, 0.35, 0.30, 0.10, 0.05],
-      'mid':       [0.10, 0.20, 0.35, 0.25, 0.10],
-      'senior':    [0.05, 0.10, 0.25, 0.35, 0.25]
-    }
-    
-    // selectedQuestions is already String[] — use directly!
-    const ids = (Array.isArray(interview.selectedQuestions) 
-      ? interview.selectedQuestions 
-      : []
-    ).map(id => String(id));
+    const jobLevel = (interview.parameters?.jobLevel || 'mid').toString().toLowerCase();
 
+    // Query DB for docs referenced in interview.selectedQuestions (or all docs if none)
+    const ids = Array.isArray(interview.selectedQuestions) ? interview.selectedQuestions.map(String) : [];
     console.log('Querying DB with String IDs:', ids);
 
+    // If selectedQuestions is empty, fallback to fetching all docs (or return empty)
+    let docs;
     if (ids.length === 0) {
-      return res.json({ ok: true, questions: [], answersMap: {} });
+      docs = await Question.find({}).sort({ rank_value: -1 }).lean();
+    } else {
+      docs = await Question.find({ question_id: { $in: ids } }).lean();
     }
-
-    const docs = await Question.find({
-      question_id: { $in: ids }  // All String → perfect match
-    }).lean();
-
     console.log(`Found ${docs.length} question docs`);
-    
-    // --- ORGANIZE BY DIFFICULTY & BUILD SAMPLING PLAN ---
-
-    // How many questions we intend to ask in the interview
-    const totalToAsk  = docs.length / 3;
-    console.log(`Preparing sampling plan for totalToAsk = ${totalToAsk} questions`);
-
-    // Build map id -> doc (already present)
-    const idToDoc = new Map(docs.map(d => [String(d.question_id), d]));
 
     // Minimal view object maker (keeps payload small)
     const makeView = (doc) => ({
-      question_id: doc.question_id,
+      question_id: String(doc.question_id),
       question_title: doc.question_title || '',
       question_text: doc.question_text || '',
-      difficulty_score: doc.difficulty_score ?? null
+      difficulty_score: Number(doc.difficulty_score ?? 3),
     });
 
-    // Group docs into buckets by difficulty (fallback to 3 if missing)
+    // Decide totalToAsk (ensure integer >=1). Current behavior used docs.length/3; keep that but normalize.
+    const totalToAsk = Math.max(1, Math.floor(docs.length / 3));
+
+    // Use sampling helpers to prepare buckets & an adjusted feasible plan
+    const { buckets: rawBuckets, plan: samplingPlan } = prepareSamplingPlanAndBuckets(docs, jobLevel, totalToAsk);
+
+    // Convert rawBuckets (full docs) into view buckets (small objects)
     const buckets = { 1: [], 2: [], 3: [], 4: [], 5: [] };
-    for (const doc of docs) {
-      const ds = Number(doc.difficulty_score);
-      const lvl = (Number.isFinite(ds) && ds >= 1 && ds <= 5) ? ds : 3;
-      buckets[lvl].push(makeView(doc));
-    }
-
-    // Compute target percentages for this job level (fallback to 'mid' if unknown)
-    const key = String(jobLevel || '').toLowerCase();
-    const percentages = DIFF_DIST[key] || DIFF_DIST['mid'];
-
-    // Compute integer target counts using fair rounding
-    const rawCounts = percentages.map(p => p * totalToAsk);
-    let targetCounts = rawCounts.map(v => Math.floor(v));
-    let assigned = targetCounts.reduce((a,b) => a + b, 0);
-    let remainder = totalToAsk - assigned;
-    if (remainder > 0) {
-      const fracs = rawCounts.map((v, i) => ({ i, frac: v - Math.floor(v) }));
-      fracs.sort((a,b) => b.frac - a.frac);
-      for (let i = 0; i < remainder; i++) targetCounts[fracs[i].i]++;
-    }
-    // safety trim
-    while (targetCounts.reduce((a,b)=>a+b,0) > totalToAsk) {
-      for (let i = targetCounts.length-1; i >= 0 && targetCounts.reduce((a,b)=>a+b,0) > totalToAsk; i--) {
-        if (targetCounts[i] > 0) targetCounts[i]--;
-      }
-    }
-
-    // Build samplingPlan (array of difficulty levels, shuffled to avoid blocky pattern)
-    let plan = [];
     for (let lvl = 1; lvl <= 5; lvl++) {
-      for (let i = 0; i < (targetCounts[lvl-1] || 0); i++) plan.push(lvl);
-    }
-    // shuffle plan for randomness but keep distribution intact
-    for (let i = plan.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [plan[i], plan[j]] = [plan[j], plan[i]];
+      const arr = Array.isArray(rawBuckets[String(lvl)]) ? rawBuckets[String(lvl)] : rawBuckets[lvl] ?? [];
+      buckets[lvl] = arr.map(makeView);
     }
 
-    // Build availability summary (how many in each bucket)
+    // Compute targetCounts from samplingPlan (counts per difficulty)
+    const targetCounts = [0,0,0,0,0]; // index 0->diff1, etc
+    for (const d of samplingPlan) {
+      if (d >= 1 && d <= 5) targetCounts[d-1] ++;
+    }
+
+    // Compute availability summary (how many in each bucket)
     const availability = {};
     for (let lvl = 1; lvl <= 5; lvl++) {
-      availability[lvl] = {
-        available: buckets[lvl].length,
-        target: targetCounts[lvl-1] ?? 0
-      };
+      availability[lvl] = { available: (buckets[lvl] || []).length, target: targetCounts[lvl-1] || 0 };
     }
 
-    // Prepare answersMap (as before)
+    // Answers map (lightweight)
     const answersMap = {};
-    docs.forEach(q => {
-      answersMap[String(q.question_id)] = q.answer_text ?? '';
-    });
+    docs.forEach(q => { answersMap[String(q.question_id)] = q.answer_text ?? ''; });
 
-    // Prepare a small ordered array (original order by ids) if frontend needs initial ordering
-    const ordered = ids.map(id => {
-      const doc = idToDoc.get(String(id));
-      if (!doc) return null;
-      return makeView(doc);
-    }).filter(Boolean);
+    // Extras: an ordered fallback list (original order); produce minimal view for fallback usage
+    const ordered = docs.map(d => makeView(d)).filter(Boolean);
 
     console.log('Prepared sampling plan and buckets for interview questions');
-    console.log("Bucket: ", buckets);
-    console.log("Plan: ", plan);
+    console.log('Bucket: ', buckets);
+    console.log('Plan: ', samplingPlan);
 
-    // Return enriched structure for frontend sampling
     return res.json({
       ok: true,
       totalToAsk,
       jobLevel,
-      samplingPlan: plan,          // e.g. [1,2,1,3,3,...] length == totalToAsk
-      targetCounts: {
-        1: targetCounts[0] || 0,
-        2: targetCounts[1] || 0,
-        3: targetCounts[2] || 0,
-        4: targetCounts[3] || 0,
-        5: targetCounts[4] || 0
-      },
-      availability,                // current counts per bucket
-      buckets,                     // actual questions grouped by difficulty: {1:[...],2:[...],...}
-      extras: ordered,             // linear list in original order (fallback)
+      samplingPlan,          // e.g. [1,2,1,3,3,...] length == totalToAsk
+      targetCounts: { 1: targetCounts[0]||0, 2: targetCounts[1]||0, 3: targetCounts[2]||0, 4: targetCounts[3]||0, 5: targetCounts[4]||0 },
+      availability,
+      buckets,
+      extras: ordered,
       answersMap
     });
-
-    // const idToDoc = new Map(docs.map(d => [d.question_id, d]));
-
-    // const ordered = ids.map(id => {
-    //   const doc = idToDoc.get(id);
-    //   if (!doc) return null;
-    //   return {
-    //     question_id: doc.question_id,
-    //     question_title: doc.question_title || '',
-    //     question_text: doc.question_text || '',
-    //   };
-    // }).filter(Boolean);
-
-    // const answersMap = {};
-    // docs.forEach(q => {
-    //   answersMap[q.question_id] = q.answer_text ?? '';
-    // });
-
-    // return res.json({ ok: true, questions: ordered, answersMap });
 
   } catch (err) {
     console.error('GET /:id/questions error', err);
     return res.status(500).json({ ok: false, error: String(err) });
   }
 });
+
+// router.get('/:id/questions', async (req, res) => {
+//   try {
+//     const param = req.params.id;
+//     console.log(`Fetching questions for interview: ${param}`);
+
+//     let interview = await Interview.findOne({ interviewId: param }).lean();
+//     if (!interview) {
+//       interview = await Interview.findById(param).lean();
+//     }
+//     if (!interview) {
+//       return res.status(404).json({ ok: false, message: 'Interview not found' });
+//     }
+
+//     console.log('Interview found. selectedQuestions:', interview.selectedQuestions);
+
+//     const jobLevel = interview.parameters?.jobLevel || 'mid';
+    
+//     const DIFF_DIST = {
+//       'associate': [0.35, 0.40, 0.20, 0.05, 0.00],
+//       'junior':    [0.20, 0.35, 0.30, 0.10, 0.05],
+//       'mid':       [0.10, 0.20, 0.35, 0.25, 0.10],
+//       'senior':    [0.05, 0.10, 0.25, 0.35, 0.25]
+//     }
+    
+//     // selectedQuestions is already String[] — use directly!
+//     const ids = (Array.isArray(interview.selectedQuestions) 
+//       ? interview.selectedQuestions 
+//       : []
+//     ).map(id => String(id));
+
+//     console.log('Querying DB with String IDs:', ids);
+
+//     if (ids.length === 0) {
+//       return res.json({ ok: true, questions: [], answersMap: {} });
+//     }
+
+//     const docs = await Question.find({
+//       question_id: { $in: ids }  // All String → perfect match
+//     }).lean();
+
+//     console.log(`Found ${docs.length} question docs`);    
+
+//     const idToDoc = new Map(docs.map(d => [d.question_id, d]));
+
+//     const ordered = ids.map(id => {
+//       const doc = idToDoc.get(id);
+//       if (!doc) return null;
+//       return {
+//         question_id: doc.question_id,
+//         question_title: doc.question_title || '',
+//         question_text: doc.question_text || '',
+//       };
+//     }).filter(Boolean);
+
+//     const answersMap = {};
+//     docs.forEach(q => {
+//       answersMap[q.question_id] = q.answer_text ?? '';
+//     });
+
+//     return res.json({ ok: true, questions: ordered, answersMap });
+
+//   } catch (err) {
+//     console.error('GET /:id/questions error', err);
+//     return res.status(500).json({ ok: false, error: String(err) });
+//   }
+// });
 
 // POST /api/interviews/:id/init-sampling
 router.post('/:id/init-sampling', async (req, res) => {
