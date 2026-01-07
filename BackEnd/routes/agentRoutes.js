@@ -4,7 +4,7 @@ import mongoose from "mongoose";
 import Transcript from "../models/Transcript.js";
 import Question from "../models/Question.js";
 import Interview from "../models/Interview.js";
-import { scoreResponses } from "../lib/scoringResponse.js"
+import { scoreResponses, scoreSingleQuestion } from "../lib/scoringResponse.js"
 import { config } from "dotenv";
 config({ path: "./back.env" });
 
@@ -261,10 +261,57 @@ router.post("/save-question", async (req, res) => {
       { role: 'user', text: transcriptText, timestamp: new Date() }
     ]);
 
-    console.log('Saved per-question entry:', { interviewId: iid, question_id: qid, combined_len: perQ.combined_text.length });
+    // --------------------------
+    // Insert scoring (synchronous)
+    // --------------------------
+    // Fetch question expected answer from DB (ensure question exists)
+    const qDoc = await Question.findOne({ question_id: qid }).lean();
+    const expectedAnswer = (qDoc && (qDoc.answer_text || '')) || '';
+    const qTitle = (qDoc && qDoc.question_title) || '';
+    const qText = (qDoc && qDoc.question_text) || '';
 
-    // 8) Respond success (ElevenLabs expects a 200)
-    return res.status(200).json({ ok: true, saved: true, question_id: qid, combined_text: perQ.combined_text });
+    // Score the single question (0..1)
+    const scoringResult = await scoreSingleQuestion({
+      question_id: qid,
+      question_title: qTitle,
+      question_text: qText,
+      expected_answer: expectedAnswer,
+      user_response: transcriptText,
+      DEBUG: false
+    });
+
+    console.log('Scoring result for qid', qid, ':', scoringResult);
+
+    // Save scoring into the perQuestion entry inside the transcript doc (tdoc)
+    // find the perQuestion entry (ensure string equality)
+    const pqEntry = tdoc.perQuestion.find(p => String(p.question_id) === String(qid));
+    if (pqEntry) {
+      pqEntry.score = scoringResult; // store the entire scoring object (or pick fields)
+    } else {
+      // if not found, append a small record
+      tdoc.perQuestion.push({
+        question_id: qid,
+        combined_text: perQ.combined_text || transcriptText,
+        savedAt: new Date(),
+        rawUtterances: perQ.rawUtterances || [{ role: 'user', text: transcriptText, timestamp: new Date() }],
+        score: scoringResult.score || null,
+        category: scoringResult.category || ''
+      });
+    }
+    // update transcriptDoc metadata & save
+    tdoc.updatedAt = new Date();
+    await tdoc.save();
+
+    // return saved + scoring in the response so ElevenLabs gets confirmation
+    return res.status(200).json({
+      ok: true,
+      saved: true,
+      question_id: qid,
+      combined_text: perQ.combined_text,
+      scoring: scoringResult
+    });
+
+
   } catch (err) {
     console.error('save-question webhook error:', err && (err.stack || String(err)));
     // return JSON error so the tool call details show the server response

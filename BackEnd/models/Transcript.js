@@ -12,6 +12,8 @@ const UtteranceSchema = new Schema({
 const PerQuestionSchema = new Schema({
   question_id: { type: String, required: true, index: true }, // store as string
   combined_text: { type: String, default: '' },                // merged user utterances for scoring later
+  score: {type: Number, default: null },
+  category: { type: String, default: '' },                    
   savedAt: { type: Date, default: () => new Date() },
   rawUtterances: { type: [UtteranceSchema], default: [] }      // user utterances that contributed
 }, { _id: false });

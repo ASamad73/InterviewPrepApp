@@ -344,8 +344,99 @@ export async function scoreResponses({
    Export default helpers for CommonJS/ES interop
    ---------------------- */
 
+export async function scoreSingleQuestion({
+  question_id = '',
+  question_title = '',
+  question_text = '',
+  expected_answer = '',
+  user_response = '',
+  DEBUG = false,
+} = {}) {
+  try {
+    // Reuse your existing scoreResponses function for consistency.
+    // Build the single-item "ordered" array in the same shape scoreResponses expects.
+    const item = {
+      question_id: String(question_id ?? ''),
+      question_title: question_title ?? '',
+      question_text: question_text ?? '',
+      answer_text: expected_answer ?? '',
+      response: user_response ?? '',
+    };
+
+    // Run the same pipeline (sequential, single item)
+    const out = await scoreResponses({ ordered: [item], DEBUG, sequential: true });
+
+    // scoreResponses returns { ok: true, items: [ { ...item, score: outScore } ], ... }
+    const scoredItem = (out && Array.isArray(out.items) && out.items[0]) || null;
+    const scoreObj = scoredItem?.score || null;
+
+    let overall5 = null;
+    let fallback = true;
+    let componentScores = null;
+    let missed = [];
+    let positive = [];
+    let rationale = '';
+    let raw_llm_text = null;
+
+    if (scoreObj) {
+      overall5 = Number.isFinite(scoreObj.overall_score) ? Number(scoreObj.overall_score) : null;
+      componentScores = scoreObj.scores ?? null;
+      missed = Array.isArray(scoreObj.missed_points) ? scoreObj.missed_points : [];
+      positive = Array.isArray(scoreObj.positive_points) ? scoreObj.positive_points : [];
+      rationale = String(scoreObj.rationale ?? '');
+      raw_llm_text = scoreObj.raw_llm_text ?? null;
+      fallback = Boolean(scoreObj.fallback);
+    }
+
+    // If overall5 not available, set to 0 and keep fallback true
+    if (!Number.isFinite(overall5)) {
+      overall5 = 0;
+    }
+
+    // Map 0..5 -> 0..1
+    const score01 = Math.max(0, Math.min(1, overall5 / 5));
+
+    // Categorize per thresholds:
+    // Very low: < 0.3
+    // Borderline: 0.3 – 0.6
+    // Acceptable: 0.6 – 0.8
+    // Strong: > 0.8
+    let category = 'very_low';
+    if (score01 < 0.3) category = 'very_low';
+    else if (score01 < 0.6) category = 'borderline';
+    else if (score01 < 0.8) category = 'acceptable';
+    else category = 'strong';
+
+    return {
+      ok: true,
+      score: Number(Math.round(score01 * 100) / 100), // two-decimal
+      category,
+      details: {
+        overall_score_5: overall5,
+        componentScores,
+        missed_points: missed,
+        positive_points: positive,
+        rationale,
+        raw_llm_text,
+        fallback,
+      },
+    };
+  } catch (err) {
+    // If something goes wrong, return a conservative "very_low" with fallback info
+    console.error('scoreSingleQuestion error:', err && (err.stack || String(err)));
+    return {
+      ok: false,
+      score: 0,
+      score5: 0,
+      category: 'very_low',
+      details: { error: String(err) },
+    };
+  }
+}
+
 export default {
   scoreResponses,
+  scoreSingleQuestion,
 };
 // scoring.js
 
