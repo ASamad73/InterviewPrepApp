@@ -238,6 +238,10 @@ export default function InterviewSummary(): JSX.Element {
         // ).join('\n');
 
         // console.log('Prepared questions for widget context:', questionTexts.slice(0,3));
+        if(!interviewId){
+            console.error("Interview ID is missing when building widget context.");
+            throw new Error("Interview ID is required to build widget context.");
+        }
 
         const fullSystemPrompt = `
             You are an automated interview agent used only to run recorded mock technical interviews. Follow these rules exactly.
@@ -270,7 +274,13 @@ export default function InterviewSummary(): JSX.Element {
             8) Ending the interview — If you have been given the last question and have received and acknowledged its final answer (including any clarification), follow rule 6 to save, 
             then say exactly: “Interview complete. Thank you for your time.” Do not ask additional questions or continue the conversation.
 
-            IMPORTANT: Do not prompt for job info, role summary, or anything else outside the provided questions.
+            INTERVIEW CONTEXT:
+            - interviewId: '${interviewId}'
+
+            IMPORTANT: 
+            - Do not prompt for job info, role summary, or anything else outside the provided questions.
+            - The interviewId above is a fixed identifier for this entire session.
+            - You MUST include this exact interviewId value in every call to the save_question_transcript tool.
             `;
             
             // console.log('Building widget with embedded prompt:', { fullSystemPrompt, questionsList });

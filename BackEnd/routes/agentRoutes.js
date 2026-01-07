@@ -182,75 +182,95 @@ router.post('/:id/register-conversation', async (req, res) => {
   }
 });
 
-// router.post('/save-question-debug', (req, res) => {
-//   console.log('>>> SAVE-QUESTION-DEBUG HIT');
-//   console.log('headers:', req.headers);
-//   console.log('body-keys:', Object.keys(req.body || {}));
-//   try { console.log('body-snippet:', JSON.stringify(req.body).slice(0,2000)); } catch(e){}
-//   res.json({ ok: true, debug: true });
-// });
+
 
 // router.post("/save-question", verifyWebhook, async (req, res) => {
+// POST /api/webhooks/save-question
 router.post("/save-question", async (req, res) => {
   try {
-    console.log("save-question webhook called");
+    console.log("=== save-question webhook called ===");
+    console.log("Headers:", {
+      origin: req.headers.origin,
+      'content-type': req.headers['content-type'],
+      signature: req.headers['elevenlabs-signature'] || req.headers['x-eleven-signature'] || null
+    });
+
     const payload = req.body || {};
-    console.log("Payload: ", payload);
 
-    const data = payload.data || {};
-    // Use the same interviewId extraction as post-call-transcript:
-    const interviewId = data?.conversation_initiation_client_data?.dynamic_variables?.interviewId ||
-                        payload?.metadata?.interviewId || payload?.interviewId || null;
+    const interviewId = payload.interviewId || null;
 
-    // parameters (tool inputs) - keep same keys you've used before
-    const parameters = payload.parameters ?? payload.input ?? payload.data ?? {};
+    // 2) Extract question id (tool param shape or top-level)
+    const rawQ = payload.question_id || null;
 
-    // question id: same fallback keys you previously used
-    const rawQ = parameters?.question_id ?? parameters?.questionId ?? parameters?.id ?? null;
+    // 3) Extract/normalize transcript: could be a string, object, or array
+    function normalizeTranscript(raw) {
+      if (!raw && raw !== '') return '';
+      // if it's array of segments
+      if (Array.isArray(raw)) {
+        const parts = raw.map((m) => {
+          if (!m) return '';
+          if (typeof m === 'string') return m.trim();
+          return String(m.text ?? m.transcript ?? m.content ?? m.message ?? '').trim();
+        }).filter(Boolean);
+        return parts.join(' ').trim();
+      }
+      // if object with text-like fields
+      if (typeof raw === 'object') {
+        return String(raw.text ?? raw.transcript ?? raw.message ?? raw.content ?? '').trim();
+      }
+      // otherwise treat as string
+      return String(raw).trim();
+    }
 
-    // Extract transcript segments from payload.data.transcript (same normalization as post-call-transcript)
-    const rawTranscript = data?.transcript ?? payload?.transcript ?? null;
-    const transcriptArr = Array.isArray(rawTranscript)
-      ? rawTranscript
-      : (rawTranscript ? [rawTranscript] : []);
+    // payload may include transcript in multiple places
+    const rawTranscriptCandidate = payload.transcript || null;
 
-    // normalize segments into one string (use same keys as post-call-transcript)
-    const cleanedParts = transcriptArr.map((m) => {
-      if (!m) return null;
-      if (typeof m === 'string') return m.trim();
-      return String(m.text ?? m.content ?? m.message ?? m.transcript ?? '').trim();
-    }).filter(Boolean);
+    const transcriptText = normalizeTranscript(rawTranscriptCandidate);
 
-    const transcriptText = cleanedParts.join(' ').trim();
+    console.log('Parsed fields:', {
+      interviewId: interviewId ? String(interviewId).slice(0, 40) : null,
+      question_id_raw: rawQ,
+      transcript_len: transcriptText ? transcriptText.length : 0
+    });
+    console.log('transcript snippet:', transcriptText.slice(0, 200));
 
-    console.log('save-question called; interviewId:', interviewId, 'rawQ:', rawQ);
-    console.log('transcript snippet:', transcriptText.slice(0, 120));
+    // 4) Validate required fields (but accept "skip" as valid transcript)
+    const missing = [];
+    if (!interviewId) missing.push('interviewId');
+    if (!rawQ) missing.push('question_id');
+    if (!transcriptText && transcriptText !== '') missing.push('transcript'); // transcript may be empty string but we still handle
 
-    if (!interviewId || !rawQ || !transcriptText) {
-      const missing = [];
-      if (!interviewId) missing.push('interviewId');
-      if (!rawQ) missing.push('question_id');
-      if (!transcriptText) missing.push('transcript');
+    if (missing.length) {
+      console.warn('save-question missing fields:', missing);
       return res.status(400).json({ ok: false, message: `Missing ${missing.join(', ')}` });
     }
 
+    // 5) Normalize ids to string
     const qid = String(rawQ);
+    const iid = String(interviewId);
 
-    // Reuse your existing helper to get/create the transcript doc
-    const tdoc = await ensureTranscriptDoc(interviewId, payload);
+    // 6) Ensure transcriptDoc exists (uses your helper)
+    const tdoc = await ensureTranscriptDoc(iid, payload);
+    if (!tdoc) {
+      console.error('ensureTranscriptDoc returned null/undefined for interviewId:', iid);
+      return res.status(500).json({ ok: false, message: 'Failed to create or load transcript doc' });
+    }
 
-    // upsert per-question aggregated entry (uses your helper, merges into combined_text)
-    const perQ = await upsertPerQuestion(tdoc, qid, [{ role: 'user', text: transcriptText, timestamp: new Date() }]);
+    // 7) Upsert per-question entry (your helper merges and saves). We pass a single utterance item.
+    const perQ = await upsertPerQuestion(tdoc, qid, [
+      { role: 'user', text: transcriptText, timestamp: new Date() }
+    ]);
 
-    // respond with saved combined_text so caller can confirm
+    console.log('Saved per-question entry:', { interviewId: iid, question_id: qid, combined_len: perQ.combined_text.length });
+
+    // 8) Respond success (ElevenLabs expects a 200)
     return res.status(200).json({ ok: true, saved: true, question_id: qid, combined_text: perQ.combined_text });
-
   } catch (err) {
-    console.error('save-question webhook error:', err);
+    console.error('save-question webhook error:', err && (err.stack || String(err)));
+    // return JSON error so the tool call details show the server response
     return res.status(500).json({ ok: false, error: String(err) });
   }
 });
-
 
 router.post("/finish-interview", verifyWebhook, async (req, res) => {
   try {
