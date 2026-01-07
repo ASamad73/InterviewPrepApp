@@ -286,7 +286,8 @@ router.post("/save-question", async (req, res) => {
     // find the perQuestion entry (ensure string equality)
     const pqEntry = tdoc.perQuestion.find(p => String(p.question_id) === String(qid));
     if (pqEntry) {
-      pqEntry.score = scoringResult; // store the entire scoring object (or pick fields)
+      pqEntry.score = scoringResult.score; // store the entire scoring object (or pick fields)
+      pqEntry.category = scoringResult.category; // store the entire scoring object (or pick fields)
     } else {
       // if not found, append a small record
       tdoc.perQuestion.push({
