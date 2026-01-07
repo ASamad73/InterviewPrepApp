@@ -1,4 +1,4 @@
-import Interview from "../models/Interview";
+import Interview from "../models/Interview.js";
 
 export const DIFFICULTY_DISTRIBUTION = {
   associate: [0.60, 0.30, 0.08, 0.02, 0.00],
