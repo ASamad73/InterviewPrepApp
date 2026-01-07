@@ -5,6 +5,7 @@ import Transcript from "../models/Transcript.js";
 import Question from "../models/Question.js";
 import Interview from "../models/Interview.js";
 import { scoreResponses, scoreSingleQuestion } from "../lib/scoringResponse.js"
+import { selectNextQuestion } from "../lib/sampling.js";
 import { config } from "dotenv";
 config({ path: "./back.env" });
 
@@ -245,11 +246,9 @@ router.post("/save-question", async (req, res) => {
       return res.status(400).json({ ok: false, message: `Missing ${missing.join(', ')}` });
     }
 
-    // 5) Normalize ids to string
     const qid = String(rawQ);
     const iid = String(interviewId);
 
-    // 6) Ensure transcriptDoc exists (uses your helper)
     const tdoc = await ensureTranscriptDoc(iid, payload);
     if (!tdoc) {
       console.error('ensureTranscriptDoc returned null/undefined for interviewId:', iid);
@@ -299,23 +298,33 @@ router.post("/save-question", async (req, res) => {
         category: scoringResult.category || ''
       });
     }
+
     // update transcriptDoc metadata & save
     tdoc.updatedAt = new Date();
     await tdoc.save();
 
-    // return saved + scoring in the response so ElevenLabs gets confirmation
+    let nextPick = null;
+    try {
+      nextPick = await selectNextQuestion(interviewId, qid, scoringResult);
+      console.log('selectNextQuestion decided:', nextPick?.action);
+    } catch (e) {
+      console.error('selectNextQuestion error:', e && (e.stack || String(e)));
+      nextPick = null;
+    }
+
+    console.log("NEXT QUESTION: ", nextPick)
+
     return res.status(200).json({
       ok: true,
       saved: true,
       question_id: qid,
       combined_text: perQ.combined_text,
-      scoring: scoringResult
+      scoring: scoringResult,
+      next: nextPick
     });
-
 
   } catch (err) {
     console.error('save-question webhook error:', err && (err.stack || String(err)));
-    // return JSON error so the tool call details show the server response
     return res.status(500).json({ ok: false, error: String(err) });
   }
 });
