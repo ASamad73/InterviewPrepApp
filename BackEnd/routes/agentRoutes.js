@@ -1,6 +1,6 @@
 import express from "express";
 import crypto from "crypto";
-import { getIO } from '../server.js'; 
+import { getIO } from '../lib/socket.js'; 
 import Transcript from "../models/Transcript.js";
 import Question from "../models/Question.js";
 import Interview from "../models/Interview.js";
