@@ -172,9 +172,7 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
     Number.isFinite(interview.currentPlanIndex) ? interview.currentPlanIndex : 0;
 
   // total questions we intend to ask
-  const totalToAsk = Number.isFinite(interview.totalToAsk) && interview.totalToAsk > 0
-    ? interview.totalToAsk
-    : interview.samplingPlan.length;
+  const totalToAsk = interview.selectedQuestions.length;
 
   // Safety: if we've already consumed the planned number, finalize
   if (interview.currentPlanIndex >= totalToAsk) {
@@ -182,6 +180,8 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
     await interview.save();
     return { action: "end" };
   }
+
+  console.log("INTERVIEW NOT FINALIZED")
 
   const plan = interview.samplingPlan;
   const idx = Math.max(0, Math.min(interview.currentPlanIndex || 0, plan.length));
