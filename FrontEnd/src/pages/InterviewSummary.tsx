@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@clerk/clerk-react";
+import { io as ioClient } from "socket.io-client";
 
 type LocationState = {
   id?: string;
@@ -15,6 +16,19 @@ type QuestionItem = {
     question_text: string;
     difficulty_score: number;
 };
+
+type NextQuestionPayload = {
+    action: string;
+    question: {
+        question_id: string;
+        question_title: string;
+        question_text: string;
+        difficulty_score: number;
+    };
+    followup_prompt: string;
+}
+
+let socket: any = null;
 
 export default function InterviewSummary(): JSX.Element {
     const location = useLocation();
@@ -44,7 +58,7 @@ export default function InterviewSummary(): JSX.Element {
 
     // --- question sampling / difficulty state (new) ---
     const [questionBuckets, setQuestionBuckets] = useState<Record<number, QuestionItem[]>>({
-    1: [], 2: [], 3: [], 4: [], 5: []
+        1: [], 2: [], 3: [], 4: [], 5: []
     });
     const [samplingPlan, setSamplingPlan] = useState<number[]>([]);
     const [extrasList, setExtrasList] = useState<QuestionItem[]>([]);
@@ -591,7 +605,94 @@ export default function InterviewSummary(): JSX.Element {
         };
     }, [interviewId]);
 
+    // function remountWidgetWithQuestion(payload: NextQuestionPayload) {
+    //     const container = document.getElementById('widget-container');
+    //     if (!container) return;
 
+    //     // remove old widget
+    //     removeMountedWidgetElement(); // reuse your helper
+
+    //     // Build new override prompt that includes currentQuestion substitution (same format you used at mount)
+    //     const currentQuestion = payload.question || { question_text: payload.followup_prompt || '' };
+    //     const overridePrompt = buildFullSystemPrompt(currentQuestion, interviewId); // implement to return string
+
+    //     // create widget again (same code as in loadAndMountWidget but pass overridePrompt and dynamic vars)
+    //     const widgetEl = document.createElement('elevenlabs-convai') as HTMLElement;
+    //     widgetEl.setAttribute('agent-id', import.meta.env.VITE_ELEVEN_AGENT_ID);
+    //     widgetEl.setAttribute('override-prompt', overridePrompt);
+    //     widgetEl.setAttribute('dynamic-variables', JSON.stringify({ interviewId, currentQuestion }));
+    //     container.appendChild(widgetEl);
+    //     widgetRef.current = widgetEl;
+
+    //     // optional: wait for it to mount, then call any helper methods
+    // }
+
+    function handleNextQuestion(payload: NextQuestionPayload) {
+        if (!payload) return;
+        const { action, question, followup_prompt } = payload;
+
+        // If followup prompt -> ask followup via the widget
+        const el = widgetRef.current;
+        if(!el) throw new Error("Widget element not found in handleNextQuestion");
+
+        if (action === 'followup' && followup_prompt) {
+            console.log("Handling followup prompt via widget API");
+            // Some widgets expose custom API; try a best-effort call:
+            try {
+                if ((el as any).callRuntimeAction) {
+                    (el as any).callRuntimeAction('ask_followup', { prompt: followup_prompt });
+                    return;
+                }
+            } catch (e) {
+                console.warn('widget runtime call failed', e);
+                return;
+            }
+        }
+
+        if (action === 'ask' && question) {
+            console.log("Handling next question via dynamic variables update");
+
+            const runtimeVars = { interviewId, currentQuestion: question };
+            try {
+                // 1) Update dynamic variables attribute (widget will read this)
+                el.setAttribute('dynamic-variables', JSON.stringify(runtimeVars));
+                try { (el as any).metadata = runtimeVars; } catch(e) {}
+                // 2) If widget offers a refresh method, call it. If not, re-mount the widget (fallback below)
+                if (typeof (el as any).refresh === 'function') {
+                    (el as any).refresh();
+                    return;
+                }
+            } catch (err) {
+                console.warn('Failed to update widget runtime variables:', err);
+                return;
+            }
+        }
+        
+        console.log("GETTING TO FALLBACK FOR NEXT-QUESTION")
+        // remountWidgetWithQuestion(payload);
+    }
+
+    useEffect(() => {
+        if (!interviewId) return;
+
+        socket = ioClient(API, { transports: ['websocket'] });
+
+        socket.on('connect', () => {
+            console.log('socket connected', socket.id);
+            socket.emit('join_interview', { interviewId });
+        });
+
+        socket.on('next_question', (payload: NextQuestionPayload) => {
+            console.log('received next_question', payload);
+            handleNextQuestion(payload);
+        });
+
+        socket.on('disconnect', () => console.log('socket disconnected'));
+
+        return () => {
+            try { socket.disconnect(); } catch (e) {}
+        };
+    }, [interviewId]);
 
     return (
         <main className="min-h-[calc(100vh-4rem)] bg-[#0c0c0c] px-6 py-10">

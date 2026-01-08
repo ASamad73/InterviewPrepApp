@@ -19,8 +19,17 @@ const io = new Server(server, {
 io.on("connection", (socket) => {
   console.log("🔌 A user connected:", socket.id);
 
+  socket.on("join_interview", (payload) => {
+    console.log("received join_interview:", payload);
+    const interviewId = payload?.interviewId;
+    if (interviewId) {
+      socket.join(String(interviewId));
+      console.log(`Socket ${socket.id} joined room ${interviewId}`);
+    }
+  });
+
   socket.on("disconnect", () => {
-    console.log("❌ User disconnected:", socket.id);
+    console.log("socket disconnected:", socket.id);
   });
 });
 

@@ -1,6 +1,6 @@
 import express from "express";
 import crypto from "crypto";
-import mongoose from "mongoose";
+import { io } from '../server.js'; 
 import Transcript from "../models/Transcript.js";
 import Question from "../models/Question.js";
 import Interview from "../models/Interview.js";
@@ -314,13 +314,32 @@ router.post("/save-question", async (req, res) => {
 
     console.log("NEXT QUESTION: ", nextPick)
 
+    try {
+      if (nextPick) {
+        // Send minimal useful payload
+        const payload = {
+          action: nextPick.action,
+          question: nextPick.question ? {
+            question_id: String(nextPick.question.question_id),
+            question_title: nextPick.question.question_title ?? '',
+            question_text: nextPick.question.question_text ?? '',
+            difficulty_score: Number(nextPick.question.difficulty_score ?? nextPick.question.difficulty ?? 3)
+          } : null,
+          followup_prompt: nextPick.prompt ?? null
+        };
+        io.to(String(interviewId)).emit('next_question', payload);
+        console.log('Emitted next_question to room', interviewId, payload.action);
+      }
+    } catch (err) {
+      console.error('Failed to emit next_question:', err);
+    }
+
     return res.status(200).json({
       ok: true,
       saved: true,
       question_id: qid,
       combined_text: perQ.combined_text,
       scoring: scoringResult,
-      next: nextPick
     });
 
   } catch (err) {

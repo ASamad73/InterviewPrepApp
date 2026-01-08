@@ -173,7 +173,7 @@ router.post('/save-parameters', async (req, res) => {
     }
 
     // const num_questions = 10;
-    const num_questions = 2;
+    const num_questions = 5;
     const questions_pool = num_questions * 3;
     const selectedIds = await selectQuestions(jobTitle, jobLevel, jobDescription, questions_pool);
 
