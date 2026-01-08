@@ -1,47 +1,18 @@
+// server.js
 import http from "http";
 import { app } from "./app.js";
 import mongoose from "mongoose";
-import { Server } from "socket.io";
 import { config } from "dotenv";
+import { initSocket } from "./server/socket.js"; // <--- new module
 
 config({ path: "./back.env" });
 
 const server = http.createServer(app);
 
-let io;
+// initialize Socket.IO after server created
+initSocket(server);
 
-io = new Server(server, {
-  cors: {
-    origin: ['http://localhost:5173', 'https://ai-interviewprepapp.netlify.app'],
-    methods: ["GET", "POST"],
-    credentials: true,
-  },
-});
-
-io.on("connection", (socket) => {
-  console.log("🔌 A user connected:", socket.id);
-
-  socket.on("join_interview", (payload) => {
-    console.log("received join_interview:", payload);
-    const interviewId = payload?.interviewId;
-    if (interviewId) {
-      socket.join(String(interviewId));
-      console.log(`Socket ${socket.id} joined room ${interviewId}`);
-    }
-  });
-
-  socket.on("disconnect", () => {
-    console.log("socket disconnected:", socket.id);
-  });
-});
-
-export function getIO() {
-  if (!io) {
-    throw new Error("Socket.io not initialized. Call initSocketIO() first.");
-  }
-  return io;
-}
-
+// Then continue with DB connect + listen
 const PORT = process.env.PORT || 8000;
 const MONGO_URL = process.env.MONGO_URL;
 
