@@ -164,22 +164,30 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
   if (!interview) throw new Error('Interview not found: ' + interviewId);
 
   // ---- defaults / guards ----
-  interview.samplingPlan = interview.samplingPlan || [];
-  interview.buckets = interview.buckets || { 1: [], 2: [], 3: [], 4: [], 5: [] };
-  interview.extras = interview.extras || [];
+  interview.samplingPlan = Array.isArray(interview.samplingPlan) ? interview.samplingPlan : [];
+  // Ensure buckets object has string keys '1'..'5' (normalize if needed)
+  interview.buckets = interview.buckets || { '1': [], '2': [], '3': [], '4': [], '5': [] };
+  interview.extras = Array.isArray(interview.extras) ? interview.extras : [];
   interview.currentPlanIndex =
     Number.isFinite(interview.currentPlanIndex) ? interview.currentPlanIndex : 0;
 
-  if (interview.currentPlanIndex >= interview.samplingPlan.length) {
+  // total questions we intend to ask
+  const totalToAsk = Number.isFinite(interview.totalToAsk) && interview.totalToAsk > 0
+    ? interview.totalToAsk
+    : interview.samplingPlan.length;
+
+  // Safety: if we've already consumed the planned number, finalize
+  if (interview.currentPlanIndex >= totalToAsk) {
     interview.status = "finalized";
+    await interview.save();
     return { action: "end" };
   }
-  
-  const plan = interview.samplingPlan;
-  const idx = interview.currentPlanIndex;
-  const currentTarget = plan[idx] ?? 3;
 
-  // ---- normalize scoring ----
+  const plan = interview.samplingPlan;
+  const idx = Math.max(0, Math.min(interview.currentPlanIndex || 0, plan.length));
+  const currentTarget = Number(plan[idx] ?? 3);
+
+  // normalize scoring
   const score01 = Number(scoringResult.score ?? scoringResult.score01 ?? 0);
   const category =
     scoringResult.category ??
@@ -191,38 +199,75 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
       ? 'acceptable'
       : 'strong');
 
-  let result = null;
+  // helpers
+  const getBucket = (bucketsObj, d) => bucketsObj[String(d)] ?? [];
+  const hasAnyAvailableQuestions = (bucketsObj, extrasArr) => {
+    for (let d = 1; d <= 5; d++) {
+      if ((bucketsObj[String(d)] || []).length > 0) return true;
+    }
+    return Array.isArray(extrasArr) && extrasArr.length > 0;
+  };
 
-  // ============================================================
-  // CASE 1: VERY LOW → step down, DO NOT consume plan
-  // ============================================================
+  // CASE 1: VERY LOW — step down and prefer easier questions; do NOT consume plan
   if (category === 'very_low') {
-    const desired = Math.max(1, currentTarget - 1);
-    const fallback = findNearestAvailableDifficulty(interview.buckets, desired);
-
-    if (fallback !== null) {
-      const { question } = popRandomFromBucket(interview.buckets, fallback);
-      if (question) {
-        await interview.save();
-        return { action: 'ask', question };
+    // 1) try strictly lower difficulties (from currentTarget-1 down to 1), prefer same-tag when possible
+    for (let d = Math.min(5, currentTarget - 1); d >= 1; d--) {
+      if (getBucket(interview.buckets, d).length > 0) {
+        const { question } = popRandomFromBucket(interview.buckets, d);
+        if (question) {
+          await interview.save();
+          return { action: 'ask', question };
+        }
       }
     }
 
-    // nothing left → end
-    interview.status = 'finalized';
-    await interview.save();
+    // 2) if no lower difficulty available, try same difficulty or nearest available (this is "choose similar difficulty")
+    {
+      const nearestSame = findNearestAvailableDifficulty(interview.buckets, currentTarget);
+      if (nearestSame !== null) {
+        const { question } = popRandomFromBucket(interview.buckets, nearestSame);
+        if (question) {
+          await interview.save();
+          return { action: 'ask', question };
+        }
+      }
+    }
+
+    // 3) try any available difficulty as last resort (so we never end early while questions exist)
+    for (let d = 1; d <= 5; d++) {
+      if (getBucket(interview.buckets, d).length > 0) {
+        const { question } = popRandomFromBucket(interview.buckets, d);
+        if (question) {
+          await interview.save();
+          return { action: 'ask', question };
+        }
+      }
+    }
+
+    // 4) fallback to extras
+    if (Array.isArray(interview.extras) && interview.extras.length > 0) {
+      const q = interview.extras.shift();
+      await interview.save();
+      return { action: 'ask', question: q };
+    }
+
+    // 5) nothing left anywhere: finalize only if we've already reached planned count OR absolutely nothing left
+    if (!hasAnyAvailableQuestions(interview.buckets, interview.extras) || interview.currentPlanIndex >= totalToAsk) {
+      interview.status = 'finalized';
+      await interview.save();
+      return { action: 'end' };
+    }
+
+    // Safety fallback (shouldn't be reached)
     return { action: 'end' };
   }
 
-  // ============================================================
-  // CASE 2: BORDERLINE → follow-up, DO NOT consume plan
-  // ============================================================
+  // CASE 2: BORDERLINE — ask follow-up (do NOT consume plan)
   if (category === 'borderline') {
     interview.pendingFollowup = interview.pendingFollowup || {};
     interview.pendingFollowup.question_id = String(prevQid);
     interview.pendingFollowup.attempts =
       (interview.pendingFollowup.attempts || 0) + 1;
-
     await interview.save();
 
     return {
@@ -233,45 +278,71 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
     };
   }
 
-  // ============================================================
-  // CASE 3: ACCEPTABLE / STRONG → consume plan
-  // ============================================================
+  // CASE 3 & 4: ACCEPTABLE / STRONG — consume plan (advance) and prefer same/nearby difficulty
   let desiredDifficulty = currentTarget;
-
   if (category === 'strong') {
     desiredDifficulty = Math.min(5, currentTarget + 1);
   }
 
-  const chosenDifficulty =
-    findNearestAvailableDifficulty(interview.buckets, desiredDifficulty) ??
-    findNearestAvailableDifficulty(interview.buckets, currentTarget);
+  // Prefer nearest available to desiredDifficulty (this will prefer exact if present)
+  let chosenDifficulty = findNearestAvailableDifficulty(interview.buckets, desiredDifficulty);
 
+  // If not found, try using currentTarget as alternative
+  if (chosenDifficulty === null) {
+    chosenDifficulty = findNearestAvailableDifficulty(interview.buckets, currentTarget);
+  }
+
+  // If still not found, try any bucket (so we don't end early)
+  if (chosenDifficulty === null) {
+    for (let d = 1; d <= 5; d++) {
+      if (getBucket(interview.buckets, d).length > 0) {
+        chosenDifficulty = d;
+        break;
+      }
+    }
+  }
+
+  // If we have a chosen difficulty, pop a question and advance the plan index
   if (chosenDifficulty !== null) {
-    const { question } = popRandomFromBucket(
-      interview.buckets,
-      chosenDifficulty
-    );
-
+    const { question } = popRandomFromBucket(interview.buckets, chosenDifficulty);
     if (question) {
-      interview.currentPlanIndex += 1;
+      interview.currentPlanIndex = (interview.currentPlanIndex || 0) + 1;
+      // Ensure we don't exceed totalToAsk
+      if (interview.currentPlanIndex > totalToAsk) interview.currentPlanIndex = totalToAsk;
       await interview.save();
       return { action: 'ask', question };
     }
   }
 
-  // ============================================================
-  // FALLBACK: extras
-  // ============================================================
-  if (interview.extras.length) {
+  // FALLBACK: extras (consume plan)
+  if (Array.isArray(interview.extras) && interview.extras.length > 0) {
     const q = interview.extras.shift();
-    interview.currentPlanIndex += 1;
+    interview.currentPlanIndex = (interview.currentPlanIndex || 0) + 1;
+    if (interview.currentPlanIndex > totalToAsk) interview.currentPlanIndex = totalToAsk;
     await interview.save();
     return { action: 'ask', question: q };
   }
 
-  // ============================================================
-  // FINAL: nothing left
-  // ============================================================
+  // FINAL: only finalize if we've exhausted all sources OR we've already reached totalToAsk
+  if (!hasAnyAvailableQuestions(interview.buckets, interview.extras) || interview.currentPlanIndex >= totalToAsk) {
+    interview.status = 'finalized';
+    await interview.save();
+    return { action: 'end' };
+  }
+
+  // Safety net: try to pick any available question
+  for (let d = 1; d <= 5; d++) {
+    if (getBucket(interview.buckets, d).length > 0) {
+      const { question } = popRandomFromBucket(interview.buckets, d);
+      if (question) {
+        interview.currentPlanIndex = (interview.currentPlanIndex || 0) + 1;
+        await interview.save();
+        return { action: 'ask', question };
+      }
+    }
+  }
+
+  // Nothing left — final end
   interview.status = 'finalized';
   await interview.save();
   return { action: 'end' };

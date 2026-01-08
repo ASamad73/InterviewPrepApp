@@ -317,7 +317,7 @@ router.post("/save-question", async (req, res) => {
 
     try {
       if (nextPick) {
-        io = getIO();
+        const io = getIO();
         const payload = {
           action: nextPick.action,
           question: nextPick.question ? {
