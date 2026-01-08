@@ -1,15 +1,17 @@
 import express from "express";
 import crypto from "crypto";
-import { io } from '../server.js'; 
+import { getIO } from '../server.js'; 
 import Transcript from "../models/Transcript.js";
 import Question from "../models/Question.js";
 import Interview from "../models/Interview.js";
 import { scoreResponses, scoreSingleQuestion } from "../lib/scoringResponse.js"
 import { selectNextQuestion } from "../lib/sampling.js";
 import { config } from "dotenv";
+import { get } from "https";
 config({ path: "./back.env" });
 
 const router = express.Router();
+io = getIO();
 
 // function verifyWebhook(req, res, next) {
 //   const secret = process.env.WEBHOOK_SECRET;

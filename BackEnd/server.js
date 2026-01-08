@@ -8,7 +8,9 @@ config({ path: "./back.env" });
 
 const server = http.createServer(app);
 
-const io = new Server(server, {
+let io;
+
+io = new Server(server, {
   cors: {
     origin: ['http://localhost:5173', 'https://ai-interviewprepapp.netlify.app'],
     methods: ["GET", "POST"],
@@ -33,10 +35,15 @@ io.on("connection", (socket) => {
   });
 });
 
+export function getIO() {
+  if (!io) {
+    throw new Error("Socket.io not initialized. Call initSocketIO() first.");
+  }
+  return io;
+}
+
 const PORT = process.env.PORT || 8000;
 const MONGO_URL = process.env.MONGO_URL;
-
-// near top of server.js, after startServer() or before server.listen(...)
 
 async function startServer() {
   try {
