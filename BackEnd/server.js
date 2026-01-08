@@ -3,7 +3,7 @@ import http from "http";
 import { app } from "./app.js";
 import mongoose from "mongoose";
 import { config } from "dotenv";
-import { initSocket } from "./server/socket.js"; // <--- new module
+import { initSocket } from "./lib/socket.js"; // <--- new module
 
 config({ path: "./back.env" });
 
