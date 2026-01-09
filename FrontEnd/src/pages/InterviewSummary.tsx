@@ -17,6 +17,11 @@ type QuestionItem = {
     difficulty_score: number;
 };
 
+type AgentQuestion = {
+    question_id: string;    
+    question_text: string;
+}
+
 type NextQuestionPayload = {
     action: string;
     question: {
@@ -209,39 +214,6 @@ export default function InterviewSummary(): JSX.Element {
                 return flattened;
             }
 
-            // --- Fallback: legacy response (old format) ---
-            if (!body || !Array.isArray(body.questions)) {
-                throw new Error("Invalid response for questions");
-            }
-
-            // normalize answers as before
-            const receivedAnswers = body.answersMap ?? {};
-            const normalized: Record<string, string> = {};
-            for (const k of Object.keys(receivedAnswers)) {
-                normalized[String(k)] = String(receivedAnswers[k] ?? '');
-            }
-            setAnswersMap(normalized);
-
-            // after you get body.samplingPlan and buckets
-            // const resp = await fetch(`${API}/api/interviews/${id}/init-sampling`, {
-            //     method: 'POST',
-            //     headers,
-            //     body: JSON.stringify({
-            //         samplingPlan: body.samplingPlan,
-            //         buckets: body.buckets,
-            //         extras: body.extras || [],
-            //         totalToAsk: body.totalToAsk
-            //     })
-            // });
-
-            // const anotherBody = await resp.json().catch(() => null);
-            // if(!resp.ok){
-            //     throw new Error(anotherBody?.message || `Failed to fetch questions (${resp.status})`);
-            // }
-
-            // return legacy list
-            return body.questions;
-
         } catch (err: any) {
             console.error("fetchSelectedQuestions error", err);
             setError(err?.message || "Failed to load questions");
@@ -251,7 +223,7 @@ export default function InterviewSummary(): JSX.Element {
         }
     }
 
-    function buildWidgetContext(qs: QuestionItem[], currentQuestion: QuestionItem | null) {
+    function buildWidgetContext(currentQuestion: AgentQuestion | null) {
         // Build cleaned list and include difficulty if present
         // const questionTexts = (qs || []).map((q) => ({
         //     id: q.question_id ?? (q as any).id ?? null,
@@ -528,8 +500,9 @@ export default function InterviewSummary(): JSX.Element {
             setError("No questions selected for this interview.");
             return;
         }
-        const firstQuestion = (qs && qs.length > 0) ? qs[0] : null;
-        const { fullSystemPrompt } = buildWidgetContext(qs, firstQuestion);
+        const firstQuestion: AgentQuestion = {question_id: qs[0].question_id, question_text: qs[0].question_text};
+
+        const { fullSystemPrompt } = buildWidgetContext(firstQuestion);
         await loadAndMountWidget(fullSystemPrompt, qs);
         setInterviewStarted(true);
         
@@ -620,31 +593,35 @@ export default function InterviewSummary(): JSX.Element {
         };
     }, [interviewId]);
 
-    // function remountWidgetWithQuestion(payload: NextQuestionPayload) {
-    //     const container = document.getElementById('widget-container');
-    //     if (!container) return;
+    function remountWidgetWithQuestion(nextQuestion: AgentQuestion) {
+        const container = document.getElementById('widget-container');
+        if (!container) return;
 
-    //     // remove old widget
-    //     removeMountedWidgetElement(); // reuse your helper
+        // remove old widget
+        removeMountedWidgetElement(); // reuse your helper
 
-    //     // Build new override prompt that includes currentQuestion substitution (same format you used at mount)
-    //     const currentQuestion = payload.question || { question_text: payload.followup_prompt || '' };
-    //     const overridePrompt = buildFullSystemPrompt(currentQuestion, interviewId); // implement to return string
+        // Build new override prompt that includes currentQuestion substitution (same format you used at mount)
+        const overridePrompt = buildWidgetContext(nextQuestion); // implement to return string
 
-    //     // create widget again (same code as in loadAndMountWidget but pass overridePrompt and dynamic vars)
-    //     const widgetEl = document.createElement('elevenlabs-convai') as HTMLElement;
-    //     widgetEl.setAttribute('agent-id', import.meta.env.VITE_ELEVEN_AGENT_ID);
-    //     widgetEl.setAttribute('override-prompt', overridePrompt);
-    //     widgetEl.setAttribute('dynamic-variables', JSON.stringify({ interviewId, currentQuestion }));
-    //     container.appendChild(widgetEl);
-    //     widgetRef.current = widgetEl;
-
-    //     // optional: wait for it to mount, then call any helper methods
-    // }
+        // create widget again (same code as in loadAndMountWidget but pass overridePrompt and dynamic vars)
+        const widgetEl = document.createElement('elevenlabs-convai') as HTMLElement;
+        widgetEl.setAttribute('agent-id', import.meta.env.VITE_ELEVEN_AGENT_ID);
+        widgetEl.setAttribute('override-prompt', overridePrompt.fullSystemPrompt);
+        widgetEl.setAttribute('dynamic-variables', JSON.stringify({ interviewId, currentQuestion: nextQuestion }));
+        container.appendChild(widgetEl);
+        widgetRef.current = widgetEl;
+    }
 
     function handleNextQuestion(payload: NextQuestionPayload) {
         if (!payload) return;
         const { action, question, followup_prompt } = payload;
+        
+        if(!question.question_id || !question.question_text){
+            console.error("Next question payload is missing required fields");
+            return;
+        }
+
+        const nextQuestion: AgentQuestion = {question_id: question?.question_id, question_text: question.question_text};
 
         // If followup prompt -> ask followup via the widget
         const el = widgetRef.current;
@@ -667,10 +644,12 @@ export default function InterviewSummary(): JSX.Element {
         if (action === 'ask' && question) {
             console.log("Handling next question via dynamic variables update");
 
-            const runtimeVars = { interviewId, currentQuestion: question };
+            const runtimeVars = {interviewId , currentQuestion: nextQuestion };
             try {
                 // 1) Update dynamic variables attribute (widget will read this)
                 el.setAttribute('dynamic-variables', JSON.stringify(runtimeVars));
+                console.log(el.getAttribute('dynamic-variables'));
+                console.log((el as any).metadata);
                 try { 
                     console.log("Setting widget metadata to:", runtimeVars);
                     (el as any).metadata = runtimeVars; 
@@ -679,6 +658,7 @@ export default function InterviewSummary(): JSX.Element {
                     {}
                 // 2) If widget offers a refresh method, call it. If not, re-mount the widget (fallback below)
                 if (typeof (el as any).refresh === 'function') {
+                    console.log("Calling widget refresh() to apply new question");
                     (el as any).refresh();
                     return;
                 }
@@ -689,7 +669,7 @@ export default function InterviewSummary(): JSX.Element {
         }
         
         console.log("GETTING TO FALLBACK FOR NEXT-QUESTION")
-        // remountWidgetWithQuestion(payload);
+        // remountWidgetWithQuestion(nextQuestion);
     }
 
     useEffect(() => {
