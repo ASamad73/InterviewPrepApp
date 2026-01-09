@@ -134,6 +134,20 @@ export default function InterviewSummary(): JSX.Element {
                 throw new Error(body?.message || `Failed to fetch questions (${res.status})`);
             }
 
+            const saveRes = await fetch(`${API}/api/interviews/${id}/init-sampling`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    samplingPlan: body.samplingPlan,
+                    buckets: body.buckets,
+                    extras: body.extras || [],
+                }),
+            });
+            
+            if (!saveRes.ok) {
+                throw new Error(`Failed to persist questions and sampling plan`);
+            }
+
             // --- Handle new enriched response shape (preferred) ---
             if (body && Array.isArray(body.samplingPlan) && body.buckets) {
                 // buckets may have string keys '1'..'5' or numeric keys; normalize to numeric keys
@@ -209,21 +223,21 @@ export default function InterviewSummary(): JSX.Element {
             setAnswersMap(normalized);
 
             // after you get body.samplingPlan and buckets
-            const resp = await fetch(`${API}/api/interviews/${id}/init-sampling`, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({
-                    samplingPlan: body.samplingPlan,
-                    buckets: body.buckets,
-                    extras: body.extras || [],
-                    totalToAsk: body.totalToAsk
-                })
-            });
+            // const resp = await fetch(`${API}/api/interviews/${id}/init-sampling`, {
+            //     method: 'POST',
+            //     headers,
+            //     body: JSON.stringify({
+            //         samplingPlan: body.samplingPlan,
+            //         buckets: body.buckets,
+            //         extras: body.extras || [],
+            //         totalToAsk: body.totalToAsk
+            //     })
+            // });
 
-            const anotherBody = await resp.json().catch(() => null);
-            if(!resp.ok){
-                throw new Error(anotherBody?.message || `Failed to fetch questions (${resp.status})`);
-            }
+            // const anotherBody = await resp.json().catch(() => null);
+            // if(!resp.ok){
+            //     throw new Error(anotherBody?.message || `Failed to fetch questions (${resp.status})`);
+            // }
 
             // return legacy list
             return body.questions;

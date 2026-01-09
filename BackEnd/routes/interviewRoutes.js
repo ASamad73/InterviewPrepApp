@@ -279,7 +279,6 @@ router.post('/save-parameters', async (req, res) => {
   }
 });
 
-
 router.get('/:id/questions', async (req, res) => {
   try {
     const param = req.params.id;
@@ -437,12 +436,13 @@ router.get('/:id/questions', async (req, res) => {
 
 // POST /api/interviews/:id/init-sampling
 router.post('/:id/init-sampling', async (req, res) => {
-  const { samplingPlan, buckets, extras, totalToAsk } = req.body;
+  const { samplingPlan, buckets, extras } = req.body;
   await Interview.updateOne({ interviewId: req.params.id }, {
-    $set: { samplingPlan, buckets, extras, totalToAsk, currentPlanIndex: 0 }
+    $set: { samplingPlan, buckets, extras, currentPlanIndex: 0 }
   });
   return res.json({ ok: true });
 });
+
 
 
 export default router
