@@ -31,11 +31,79 @@ const ENDPOINT = (model) =>
    Helpers: Gemini caller
    ---------------------- */
 
-async function callGemini(prompt, retry = 0, DEBUG = false) {
+// async function callGemini(prompt, retry = 0, DEBUG = false) {
+//   const url = ENDPOINT(MODEL);
+//   const body = {
+//     contents: [{ parts: [{ text: prompt }] }],
+//   };
+
+//   try {
+//     const res = await fetch(url, {
+//       method: "POST",
+//       headers: { "Content-Type": "application/json" },
+//       body: JSON.stringify(body),
+//     });
+
+//     const text = await res.text();
+
+//     if (!res.ok) {
+//       const snippet = text ? text.slice(0, 1000) : "";
+//       const err = new Error(`HTTP ${res.status} ${res.statusText} - ${snippet}`);
+//       err.status = res.status;
+//       throw err;
+//     }
+
+//     // Try parse JSON-like SDK response or return raw body
+//     try {
+//       const parsed = JSON.parse(text);
+//       const candidateText =
+//         parsed?.candidates?.[0]?.content?.parts?.[0]?.text ??
+//         parsed?.candidates?.[0]?.content?.[0]?.text ??
+//         parsed?.candidates?.[0]?.content ??
+//         null;
+//       if (candidateText) return candidateText.toString();
+//       // fallback to returning stringified response
+//       return text;
+//     } catch (e) {
+//       return text;
+//     }
+//   } catch (err) {
+//     const status = err?.status ?? null;
+//     if (
+//       retry < 3 &&
+//       (status === 429 || (status >= 500 && status < 600) || err.message.includes("Timeout"))
+//     ) {
+//       const backoffMs = 1000 * Math.pow(2, retry) + Math.floor(Math.random() * 300);
+//       if (DEBUG) console.warn(`Transient error (status=${status}). Retrying after ${backoffMs}ms.`);
+//       await new Promise((r) => setTimeout(r, backoffMs));
+//       return callGemini(prompt, retry + 1, DEBUG);
+//     }
+//     throw err;
+//   }
+// }
+
+// scoring.js (replace existing callGemini with this)
+async function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function parseRetryAfter(retryAfterHeader) {
+  if (!retryAfterHeader) return null;
+  // If numeric seconds
+  const sec = Number(retryAfterHeader);
+  if (!Number.isNaN(sec) && sec >= 0) return Math.round(sec * 1000);
+  // Else try HTTP-date parse
+  const date = Date.parse(retryAfterHeader);
+  if (!Number.isNaN(date)) {
+    const delta = date - Date.now();
+    return delta > 0 ? Math.round(delta) : 0;
+  }
+  return null;
+}
+
+async function callGemini(prompt, retry = 0, DEBUG = false, maxRetries = 5) {
   const url = ENDPOINT(MODEL);
-  const body = {
-    contents: [{ parts: [{ text: prompt }] }],
-  };
+  const body = { contents: [{ parts: [{ text: prompt }] }] };
 
   try {
     const res = await fetch(url, {
@@ -47,13 +115,43 @@ async function callGemini(prompt, retry = 0, DEBUG = false) {
     const text = await res.text();
 
     if (!res.ok) {
+      // Special handling for 429 Too Many Requests — respect Retry-After header if present
+      if (res.status === 429 && retry < maxRetries) {
+        const ra = res.headers ? res.headers.get("retry-after") : null;
+        const waitMs = parseRetryAfter(ra);
+        if (DEBUG) console.warn(`Gemini 429 received. Retry-After header: "${ra}". Computed waitMs: ${waitMs}`);
+
+        if (waitMs !== null && waitMs > 0) {
+          // Wait exactly as header requests then retry
+          if (DEBUG) console.log(`Waiting ${waitMs}ms per Retry-After header before retry #${retry+1}`);
+          await sleep(waitMs);
+          return callGemini(prompt, retry + 1, DEBUG, maxRetries);
+        } else {
+          // no useful Retry-After — fall back to exponential backoff
+          const backoffMs = 1000 * Math.pow(2, retry) + Math.floor(Math.random() * 300);
+          if (DEBUG) console.log(`No Retry-After header or unparsable; using exponential backoff ${backoffMs}ms (retry ${retry+1})`);
+          await sleep(backoffMs);
+          return callGemini(prompt, retry + 1, DEBUG, maxRetries);
+        }
+      }
+
+      // For 5xx and some transient errors, keep previous retry policy (up to maxRetries)
       const snippet = text ? text.slice(0, 1000) : "";
       const err = new Error(`HTTP ${res.status} ${res.statusText} - ${snippet}`);
       err.status = res.status;
+
+      // If transient and retry remains, retry with exponential backoff
+      if (retry < maxRetries && (res.status === 500 || res.status === 502 || res.status === 503 || res.status === 504)) {
+        const backoffMs = 1000 * Math.pow(2, retry) + Math.floor(Math.random() * 300);
+        if (DEBUG) console.warn(`Transient ${res.status}. Retrying after ${backoffMs}ms.`);
+        await sleep(backoffMs);
+        return callGemini(prompt, retry + 1, DEBUG, maxRetries);
+      }
+
       throw err;
     }
 
-    // Try parse JSON-like SDK response or return raw body
+    // success path
     try {
       const parsed = JSON.parse(text);
       const candidateText =
@@ -62,21 +160,19 @@ async function callGemini(prompt, retry = 0, DEBUG = false) {
         parsed?.candidates?.[0]?.content ??
         null;
       if (candidateText) return candidateText.toString();
-      // fallback to returning stringified response
       return text;
     } catch (e) {
       return text;
     }
   } catch (err) {
+    // network/other errors: attempt retry for transient conditions
     const status = err?.status ?? null;
-    if (
-      retry < 3 &&
-      (status === 429 || (status >= 500 && status < 600) || err.message.includes("Timeout"))
-    ) {
+    if (retry < maxRetries && (status === 429 || (status >= 500 && status < 600) || String(err).includes("Timeout"))) {
+      // try to respect server hint if available (err may not carry headers here)
       const backoffMs = 1000 * Math.pow(2, retry) + Math.floor(Math.random() * 300);
-      if (DEBUG) console.warn(`Transient error (status=${status}). Retrying after ${backoffMs}ms.`);
-      await new Promise((r) => setTimeout(r, backoffMs));
-      return callGemini(prompt, retry + 1, DEBUG);
+      if (DEBUG) console.warn(`Exception during Gemini call (status=${status}). Retrying after ${backoffMs}ms. err=${String(err).slice(0,200)}`);
+      await sleep(backoffMs);
+      return callGemini(prompt, retry + 1, DEBUG, maxRetries);
     }
     throw err;
   }
