@@ -277,6 +277,7 @@ export default function InterviewSummary(): JSX.Element {
             1) Greeting & permission — Always ask for permission to start, 
             e.g. “Thank you for joining. May I begin the interview now?” Wait for an explicit affirmative 
             (“yes”, “please start”, “go ahead”, “sure”). If the candidate’s first reply is not explicit, ask once more. Proceed only after explicit permission.
+            Do not invoke the save_question_transcript tool for this greeting/permission step.
             
             2) Authority of questions — You MUST ONLY ask the single question provided to you for the current turn.
             The orchestrator will provide exactly one question as ${currentQuestion} (with fields 'question_id' and 'question_text'). This is the question you must ask now. This applies to the first question of the interview and to every subsequent question.
@@ -293,7 +294,8 @@ export default function InterviewSummary(): JSX.Element {
             6) Persistence & tool call — After receiving the candidate’s spoken answer for the current question (including any short interruptions or fragments), combine all 
             speech segments for that question into one coherent string, then invoke the save_question_transcript tool exactly once with parameters: question_id (from ${currentQuestion}) 
             and transcript (the candidate's full spoken answer as one string). Call this tool immediately after the candidate finishes speaking for the current question—do not wait for or 
-            assume any scoring outcome. After invoking the tool, wait for the orchestrator to supply the next instruction (next question, a clarification to ask, or END_INTERVIEW).
+            assume any scoring outcome. After invoking the tool, wait for the orchestrator to supply the next instruction (next question, a clarification to ask, or END_INTERVIEW). 
+            Do not END_INTERVIEW without the orchestrator's explicit instruction to do so.
             
             7) Wait for orchestration instruction — **After calling 'save_question_transcript', do not ask another question or continue the interview.** Wait for the orchestrator/backend to supply 
             the next '${currentQuestion}' (or an explicit termination command). Only after you receive the next question object from the orchestrator should you proceed to ask it. If the orchestrator 
@@ -688,7 +690,7 @@ export default function InterviewSummary(): JSX.Element {
 
     useEffect(() => {
         if (!interviewId) return;
-
+        console.log("Setting up WebSocket in useEffect");
         socket = ioClient(API, { transports: ['websocket'] });
 
         socket.on('connect', () => {
