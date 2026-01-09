@@ -671,7 +671,12 @@ export default function InterviewSummary(): JSX.Element {
             try {
                 // 1) Update dynamic variables attribute (widget will read this)
                 el.setAttribute('dynamic-variables', JSON.stringify(runtimeVars));
-                try { (el as any).metadata = runtimeVars; } catch(e) {}
+                try { 
+                    console.log("Setting widget metadata to:", runtimeVars);
+                    (el as any).metadata = runtimeVars; 
+                } 
+                catch(e) 
+                    {}
                 // 2) If widget offers a refresh method, call it. If not, re-mount the widget (fallback below)
                 if (typeof (el as any).refresh === 'function') {
                     (el as any).refresh();
