@@ -160,14 +160,6 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
   const interview = await Interview.findOne({ interviewId });
   if (!interview) throw new Error('Interview not found: ' + interviewId);
 
-  console.log("=========INTERVIEW STATE BEFORE=========")
-  console.log('selectNextQuestion - interviewId:', interviewId, 'currentPlanIndex:', interview.currentPlanIndex, 'totalToAsk:', totalToAsk);
-  console.log('Plan:', interview.samplingPlan);
-  for (let d=1; d<=5; d++){
-    console.log(`bucket[${d}].length =`, (interview.buckets && (interview.buckets[String(d)] || []).length) );
-  }
-  console.log('extras.length=', Array.isArray(interview.extras) ? interview.extras.length : typeof interview.extras, 'buckets type:', typeof interview.buckets);
-
   // ---- defaults / guards ----
   interview.samplingPlan = Array.isArray(interview.samplingPlan) ? interview.samplingPlan : [];
   // Ensure buckets object has string keys '1'..'5' (normalize if needed)
@@ -175,6 +167,10 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
   interview.extras = Array.isArray(interview.extras) ? interview.extras : [];
   interview.currentPlanIndex =
     Number.isFinite(interview.currentPlanIndex) ? interview.currentPlanIndex : 0;
+
+  // total questions we intend to ask
+  const totalToAsk = interview.selectedQuestions.length;
+
 
   console.log("=========INTERVIEW STATE AFTER=========")
   console.log('selectNextQuestion - interviewId:', interviewId, 'currentPlanIndex:', interview.currentPlanIndex, 'totalToAsk:', totalToAsk);
@@ -184,9 +180,6 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
   }
   console.log('extras.length=', Array.isArray(interview.extras) ? interview.extras.length : typeof interview.extras, 'buckets type:', typeof interview.buckets);
 
-
-  // total questions we intend to ask
-  const totalToAsk = interview.selectedQuestions.length;
 
   // Safety: if we've already consumed the planned number, finalize
   if (interview.currentPlanIndex >= totalToAsk) {
