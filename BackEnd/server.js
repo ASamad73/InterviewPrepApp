@@ -10,7 +10,7 @@ config({ path: "./back.env" });
 const server = http.createServer(app);
 
 // initialize Socket.IO after server created
-const io = initSocket(server);
+initSocket(server);
 
 // Then continue with DB connect + listen
 const PORT = process.env.PORT || 8000;

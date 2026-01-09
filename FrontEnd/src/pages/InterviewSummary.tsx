@@ -689,7 +689,7 @@ export default function InterviewSummary(): JSX.Element {
 
     useEffect(() => {
         if (!interviewId) return;
-        console.log("Setting up WebSocket in useEffect");
+        console.log("Setting up WebSocket in useEffect: ", API);
         socket = ioClient(API, { path: '/socket.io', transports: ['websocket', 'polling'] });
 
         socket.on('connect', () => {
