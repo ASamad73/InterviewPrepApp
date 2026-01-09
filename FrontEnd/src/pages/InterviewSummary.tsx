@@ -690,11 +690,19 @@ export default function InterviewSummary(): JSX.Element {
     useEffect(() => {
         if (!interviewId) return;
         console.log("Setting up WebSocket in useEffect");
-        socket = ioClient(API, { transports: ['websocket'] });
+        socket = ioClient(API, { path: '/socket.io', transports: ['websocket', 'polling'] });
 
         socket.on('connect', () => {
             console.log('socket connected', socket.id);
             socket.emit('join_interview', { interviewId });
+        });
+
+         socket.on('connect_timeout', (t: number) => {
+            console.warn('socket connect_timeout', t);
+        });
+
+        socket.on('reconnect_attempt', (n: number) => {
+            console.log('socket reconnect_attempt', n);
         });
 
         socket.on('next_question', (payload: NextQuestionPayload) => {
