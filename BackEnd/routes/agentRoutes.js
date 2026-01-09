@@ -164,6 +164,35 @@ async function upsertPerQuestion(transcriptDoc, questionId, utterances = []) {
   return entry;
 }
 
+// small helper — put near top of the route
+function isAffirmativePermissionResponse(text) {
+  if (!text || typeof text !== 'string') return false;
+  const raw = text.trim();
+  if (raw.length === 0) return false;
+
+  const s = raw.toLowerCase().replace(/[^\w\s'-]/g, ' ').trim(); // remove punctuation
+
+  // quick explicit matches (covers "yes", "please start", "go ahead", "ready", "ok", etc)
+  const exactAffirmations = [
+    'yes', 'y', 'yeah', 'yep', 'sure', 'ok', 'okay', 'please start', 'please do',
+    'go ahead', 'go-ahead', "let's start", "lets start", 'start', 'ready', 'i am ready', "i'm ready"
+  ];
+  if (exactAffirmations.includes(s)) return true;
+
+  // If response is very short (<= 3 words) and all words are in the affirmation set, treat as permission.
+  const tokens = s.split(/\s+/).filter(Boolean);
+  if (tokens.length > 0 && tokens.length <= 3) {
+    const affirmSet = new Set([
+      'yes','y','yeah','yep','sure','ok','okay','please','start','go','ahead','ready','lets','let\'s',"i'm","i","am","please"
+    ]);
+    if (tokens.every(t => affirmSet.has(t))) return true;
+  }
+
+  // Otherwise ignore (not confident it's a permission/greeting)
+  return false;
+}
+
+
 // top-level in your agentRoutes.js
 const convToInterview = new Map(); // conv -> interview (in-memory)
 
@@ -194,6 +223,13 @@ router.post("/save-question", async (req, res) => {
 
     const payload = req.body || {};
 
+    const rawTranscriptCandidate = payload.transcript || null;
+
+    if (isAffirmativePermissionResponse(transcriptText)) {
+      console.log("save-question: detected greeting/permission response — ignoring save:", transcriptText);
+      return res.status(200).json({ ok: true, saved: false, reason: 'ignored_greeting_or_permission' });
+    }
+
     const interviewId = payload.interviewId || null;
 
     // 2) Extract question id (tool param shape or top-level)
@@ -220,7 +256,6 @@ router.post("/save-question", async (req, res) => {
     }
 
     // payload may include transcript in multiple places
-    const rawTranscriptCandidate = payload.transcript || null;
 
     const transcriptText = normalizeTranscript(rawTranscriptCandidate);
 

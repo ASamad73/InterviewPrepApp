@@ -277,7 +277,6 @@ export default function InterviewSummary(): JSX.Element {
             1) Greeting & permission — Always ask for permission to start, 
             e.g. “Thank you for joining. May I begin the interview now?” Wait for an explicit affirmative 
             (“yes”, “please start”, “go ahead”, “sure”). If the candidate’s first reply is not explicit, ask once more. Proceed only after explicit permission.
-            Do not invoke the save_question_transcript tool for this greeting/permission step.
             
             2) Authority of questions — You MUST ONLY ask the single question provided to you for the current turn.
             The orchestrator will provide exactly one question as ${currentQuestion} (with fields 'question_id' and 'question_text'). This is the question you must ask now. This applies to the first question of the interview and to every subsequent question.
