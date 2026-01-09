@@ -128,10 +128,16 @@ function extractJsonFromText(text) {
 //   };
 // }
 function lexicalScore(expected, response) {
-  if (!response || !response.trim()) return { correctness: 0, depth: 0, communication: 1, metrics: 0, misses: [] };
+  if (!response || !response.trim()) {
+    return { correctness: 0, depth: 0, communication: 1, metrics: 0, misses: [] };
+  }
 
   const normalize = (s) =>
-    (s || "").toLowerCase().replace(/[^a-z0-9\s]+/g, " ").split(/\s+/).filter(Boolean);
+    (s || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]+/g, " ")
+      .split(/\s+/)
+      .filter(Boolean);
 
   const eTokens = normalize(expected);
   const rTokens = normalize(response);
@@ -140,33 +146,53 @@ function lexicalScore(expected, response) {
   const matches = rTokens.filter((t) => eSet.has(t));
   const overlap = matches.length / Math.max(1, eTokens.length);
 
-  // correctness: overlap but fuzzily penalize very short responses
+  // 🔹 technical token detection FIRST
+  const technicalMatches = matches.filter(tok => tok.length > 3);
+
+  // 🔹 correctness
   let correctness = Math.min(5, Math.round(overlap * 5));
- 
+
+  // boost correctness if core concepts appear (paraphrase-safe)
   if (technicalMatches.length >= 2 && correctness < 3) {
     correctness = 3;
   }
- 
-  if (response.trim().length < 10) correctness = Math.min(correctness, 1); // short "not sure" gets low correctness
 
-  // depth: prefer presence of technical terms (count of unique matched tokens / important tokens)
-  const technicalMatches = matches.filter(tok => tok.length > 3); // naive technical token filter
-  let depth = Math.min(5, Math.round((technicalMatches.length / Math.max(1, eTokens.length)) * 5));
-  // avoid depth=5 purely due to verbosity:
-  if (rTokens.length < Math.max(8, eTokens.length / 2)) depth = Math.min(depth, 3);
+  // penalize very short answers
+  if (response.trim().length < 10) {
+    correctness = Math.min(correctness, 1);
+  }
 
-  // communication: scaled by length and punctuation (concision), capped
-  const communication = Math.min(5, Math.round(Math.min(1, rTokens.length / 20) * 5));
+  // 🔹 depth
+  let depth = Math.min(
+    5,
+    Math.round((technicalMatches.length / Math.max(1, eTokens.length)) * 5)
+  );
 
-  const metrics = (/[0-9]+/.test(response) ? 2 : 0);
+  // avoid depth inflation from verbosity
+  if (rTokens.length < Math.max(8, eTokens.length / 2)) {
+    depth = Math.min(depth, 3);
+  }
 
-  const missed = eTokens.slice(0, 30).filter((t) => !rTokens.includes(t)).slice(0, 10);
+  // 🔹 communication
+  const communication = Math.min(
+    5,
+    Math.round(Math.min(1, rTokens.length / 20) * 5)
+  );
+
+  // 🔹 metrics
+  const metrics = /[0-9]+/.test(response) ? 2 : 0;
+
+  const missed = eTokens
+    .slice(0, 30)
+    .filter((t) => !rTokens.includes(t))
+    .slice(0, 10);
+
   return {
     correctness,
     depth,
     communication,
     metrics,
-    misses: Array.from(new Set(missed)).slice(0, 10),
+    misses: Array.from(new Set(missed)),
   };
 }
 
