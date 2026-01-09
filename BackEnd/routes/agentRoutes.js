@@ -224,6 +224,7 @@ router.post("/save-question", async (req, res) => {
     const payload = req.body || {};
 
     const rawTranscriptCandidate = payload.transcript || null;
+    const transcriptText = normalizeTranscript(rawTranscriptCandidate);
 
     if (isAffirmativePermissionResponse(transcriptText)) {
       console.log("save-question: detected greeting/permission response — ignoring save:", transcriptText);
@@ -256,8 +257,6 @@ router.post("/save-question", async (req, res) => {
     }
 
     // payload may include transcript in multiple places
-
-    const transcriptText = normalizeTranscript(rawTranscriptCandidate);
 
     console.log('Parsed fields:', {
       interviewId: interviewId ? String(interviewId).slice(0, 40) : null,
