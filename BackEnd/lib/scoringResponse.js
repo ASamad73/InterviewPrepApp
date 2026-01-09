@@ -100,8 +100,35 @@ function extractJsonFromText(text) {
    (used if LLM response not parseable)
    ---------------------- */
 
+// function lexicalScore(expected, response) {
+//   if (!response || !response.trim()) return { correctness: 0, depth: 0, communication: 1, metrics: 0 };
+
+//   const normalize = (s) =>
+//     (s || "").toLowerCase().replace(/[^a-z0-9\s]+/g, " ").split(/\s+/).filter(Boolean);
+
+//   const eTokens = normalize(expected);
+//   const rTokens = normalize(response);
+
+//   const eSet = new Set(eTokens);
+//   const matches = rTokens.filter((t) => eSet.has(t));
+//   const overlap = matches.length / Math.max(1, eTokens.length);
+
+//   const correctness = Math.min(5, Math.round(overlap * 5)); // rough
+//   const depth = Math.min(5, Math.round(Math.min(1, rTokens.length / Math.max(10, eTokens.length)) * 5));
+//   const communication = Math.min(5, Math.round(Math.min(1, rTokens.length / 20) * 5));
+//   const metrics = /[0-9]+/.test(response) ? 2 : 0;
+
+//   const missed = eTokens.slice(0, 30).filter((t) => !rTokens.includes(t)).slice(0, 10);
+//   return {
+//     correctness,
+//     depth,
+//     communication,
+//     metrics,
+//     misses: Array.from(new Set(missed)).slice(0, 10),
+//   };
+// }
 function lexicalScore(expected, response) {
-  if (!response || !response.trim()) return { correctness: 0, depth: 0, communication: 1, metrics: 0 };
+  if (!response || !response.trim()) return { correctness: 0, depth: 0, communication: 1, metrics: 0, misses: [] };
 
   const normalize = (s) =>
     (s || "").toLowerCase().replace(/[^a-z0-9\s]+/g, " ").split(/\s+/).filter(Boolean);
@@ -113,10 +140,25 @@ function lexicalScore(expected, response) {
   const matches = rTokens.filter((t) => eSet.has(t));
   const overlap = matches.length / Math.max(1, eTokens.length);
 
-  const correctness = Math.min(5, Math.round(overlap * 5)); // rough
-  const depth = Math.min(5, Math.round(Math.min(1, rTokens.length / Math.max(10, eTokens.length)) * 5));
+  // correctness: overlap but fuzzily penalize very short responses
+  let correctness = Math.min(5, Math.round(overlap * 5));
+ 
+  if (technicalMatches.length >= 2 && correctness < 3) {
+    correctness = 3;
+  }
+ 
+  if (response.trim().length < 10) correctness = Math.min(correctness, 1); // short "not sure" gets low correctness
+
+  // depth: prefer presence of technical terms (count of unique matched tokens / important tokens)
+  const technicalMatches = matches.filter(tok => tok.length > 3); // naive technical token filter
+  let depth = Math.min(5, Math.round((technicalMatches.length / Math.max(1, eTokens.length)) * 5));
+  // avoid depth=5 purely due to verbosity:
+  if (rTokens.length < Math.max(8, eTokens.length / 2)) depth = Math.min(depth, 3);
+
+  // communication: scaled by length and punctuation (concision), capped
   const communication = Math.min(5, Math.round(Math.min(1, rTokens.length / 20) * 5));
-  const metrics = /[0-9]+/.test(response) ? 2 : 0;
+
+  const metrics = (/[0-9]+/.test(response) ? 2 : 0);
 
   const missed = eTokens.slice(0, 30).filter((t) => !rTokens.includes(t)).slice(0, 10);
   return {
@@ -127,6 +169,7 @@ function lexicalScore(expected, response) {
     misses: Array.from(new Set(missed)).slice(0, 10),
   };
 }
+
 
 /* ----------------------
    Main scoring: prompts Gemini to produce JSON
@@ -267,7 +310,13 @@ export async function scoreResponses({
         metrics: lex.metrics,
       };
 
-      let weighted5 = weightedOverall(scores) * 0.9; // conservative
+      let weighted5 = weightedOverall(scores);
+
+      // Only penalize hard failures, not semantic mismatch
+      if (lex.correctness === 0 && lex.depth === 0) {
+        weighted5 *= 0.7;
+      }
+
       weighted5 = round(weighted5);
 
       return {
@@ -306,15 +355,25 @@ function clamp(v) {
 
 function weightedOverall(scores) {
   const W = {
-    correctness: 0.6,
-    depth: 0.2,
-    communication: 0.15,
-    metrics: 0.05,
+    correctness: 0.75,   // 🔼 correctness dominates
+    depth: 0.15,
+    communication: 0.10,
+    metrics: 0.0,        // metrics should NEVER tank correctness
   };
+
   let sum = 0;
-  for (const k in W) sum += W[k] * (scores[k] || 0);
+  for (const k in W) {
+    sum += W[k] * (scores[k] || 0);
+  }
+
+  // Guardrail: if correctness ≥ 3, overall cannot be "very low"
+  if ((scores.correctness || 0) >= 3) {
+    sum = Math.max(sum, 2.5);
+  }
+
   return round(sum);
 }
+
 
 function round(v) {
   return Math.round(v * 100) / 100;
@@ -333,6 +392,11 @@ export async function scoreSingleQuestion({
   DEBUG = false,
 } = {}) {
   try {
+
+    const lowerResp = (user_response || '').toLowerCase();
+    if (['not sure','don\'t know','pass','skip','move on','i don\'t know'].some(p => lowerResp.includes(p))) {
+      return { ok: true, score: 0.0, category: 'very_low', details: { overall_score_5: 0, componentScores: { correctness:0, depth:0, communication:0, metrics:0 }, rationale: 'Explicit low answer (not sure/skip)' } };
+    }
     // Reuse your existing scoreResponses function for consistency.
     // Build the single-item "ordered" array in the same shape scoreResponses expects.
     const item = {

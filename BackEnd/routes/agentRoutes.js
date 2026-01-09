@@ -191,11 +191,6 @@ router.post('/:id/register-conversation', async (req, res) => {
 router.post("/save-question", async (req, res) => {
   try {
     console.log("=== save-question webhook called ===");
-    console.log("Headers:", {
-      origin: req.headers.origin,
-      'content-type': req.headers['content-type'],
-      signature: req.headers['elevenlabs-signature'] || req.headers['x-eleven-signature'] || null
-    });
 
     const payload = req.body || {};
 

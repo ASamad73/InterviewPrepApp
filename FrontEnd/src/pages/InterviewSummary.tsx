@@ -11,7 +11,7 @@ type LocationState = {
 };
 
 type QuestionItem = {
-    question_id: number;
+    question_id: string;
     question_title: string;
     question_text: string;
     difficulty_score: number;
@@ -173,7 +173,7 @@ export default function InterviewSummary(): JSX.Element {
                     for (const it of items) {
                     // ensure shape matches QuestionItem (id/title/text); if server already returns that shape, fine
                         flattened.push({
-                            question_id: Number(it.question_id ?? it.id ?? ''),
+                            question_id: String(it.question_id ?? it.id ?? ''),
                             question_title: String(it.question_title ?? it.title ?? ''),
                             question_text: String(it.question_text ?? it.text ?? it.question ?? ''),
                             difficulty_score: Number(it.difficulty_score ?? lvl),
@@ -184,7 +184,7 @@ export default function InterviewSummary(): JSX.Element {
                 if (Array.isArray(body.extras)) {
                     for (const it of body.extras) {
                     flattened.push({
-                        question_id: Number(it.question_id ?? it.id),
+                        question_id: String(it.question_id ?? it.id),
                         question_title: String(it.question_title ?? it.title ?? ''),
                         question_text: String(it.question_text ?? it.text ?? it.question ?? ''),
                         difficulty_score: Number(it.difficulty_score ?? 3),

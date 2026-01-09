@@ -146,6 +146,7 @@ export function sampleQuestionsFromPlan(buckets, plan) {
 
   for (const desired of plan) {
     const { question, buckets: newBuckets, usedDifficulty } = popRandomFromBucket(working, desired);
+    console.log('attempting popRandomFromBucket for difficulty', d);
     if (!question) break; // no more available questions
     selected.push({ ...question, sampled_difficulty: usedDifficulty });
     // working already mutated by popRandomFromBucket, but reassign to be safe
@@ -159,6 +160,14 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
   const interview = await Interview.findOne({ interviewId });
   if (!interview) throw new Error('Interview not found: ' + interviewId);
 
+  console.log("=========INTERVIEW STATE BEFORE=========")
+  console.log('selectNextQuestion - interviewId:', interviewId, 'currentPlanIndex:', interview.currentPlanIndex, 'totalToAsk:', totalToAsk);
+  console.log('Plan:', interview.samplingPlan);
+  for (let d=1; d<=5; d++){
+    console.log(`bucket[${d}].length =`, (interview.buckets && (interview.buckets[String(d)] || []).length) );
+  }
+  console.log('extras.length=', Array.isArray(interview.extras) ? interview.extras.length : typeof interview.extras, 'buckets type:', typeof interview.buckets);
+
   // ---- defaults / guards ----
   interview.samplingPlan = Array.isArray(interview.samplingPlan) ? interview.samplingPlan : [];
   // Ensure buckets object has string keys '1'..'5' (normalize if needed)
@@ -166,6 +175,15 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
   interview.extras = Array.isArray(interview.extras) ? interview.extras : [];
   interview.currentPlanIndex =
     Number.isFinite(interview.currentPlanIndex) ? interview.currentPlanIndex : 0;
+
+  console.log("=========INTERVIEW STATE AFTER=========")
+  console.log('selectNextQuestion - interviewId:', interviewId, 'currentPlanIndex:', interview.currentPlanIndex, 'totalToAsk:', totalToAsk);
+  console.log('Plan:', interview.samplingPlan);
+  for (let d=1; d<=5; d++){
+    console.log(`bucket[${d}].length =`, (interview.buckets && (interview.buckets[String(d)] || []).length) );
+  }
+  console.log('extras.length=', Array.isArray(interview.extras) ? interview.extras.length : typeof interview.extras, 'buckets type:', typeof interview.buckets);
+
 
   // total questions we intend to ask
   const totalToAsk = interview.selectedQuestions.length;
@@ -212,6 +230,7 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
       if (getBucket(interview.buckets, d).length > 0) {
         console.log("PICKING FROM LOWER DIFFICULTY:", d);
         const { question } = popRandomFromBucket(interview.buckets, d);
+        console.log('attempting popRandomFromBucket for difficulty', d);
         if (question) {
           console.log("QUESTION SELECTED")
           await interview.save();
@@ -225,6 +244,7 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
       const nearestSame = findNearestAvailableDifficulty(interview.buckets, currentTarget);
       if (nearestSame !== null) {
         const { question } = popRandomFromBucket(interview.buckets, nearestSame);
+        console.log('attempting popRandomFromBucket for difficulty', d);
         if (question) {
           await interview.save();
           return { action: 'ask', question };
@@ -236,6 +256,7 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
     for (let d = 1; d <= 5; d++) {
       if (getBucket(interview.buckets, d).length > 0) {
         const { question } = popRandomFromBucket(interview.buckets, d);
+        console.log('attempting popRandomFromBucket for difficulty', d);
         if (question) {
           await interview.save();
           return { action: 'ask', question };
@@ -306,6 +327,7 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
   if (chosenDifficulty !== null) {
     console.log("ASKING FROM CHOSEN DIFFICULTY:", chosenDifficulty);
     const { question } = popRandomFromBucket(interview.buckets, chosenDifficulty);
+    console.log('attempting popRandomFromBucket for difficulty', d);
     if (question) {
       interview.currentPlanIndex = (interview.currentPlanIndex || 0) + 1;
       // Ensure we don't exceed totalToAsk
@@ -338,6 +360,7 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
     console.log("SAFETY NET CHECK DIFFICULTY");
     if (getBucket(interview.buckets, d).length > 0) {
       const { question } = popRandomFromBucket(interview.buckets, d);
+      console.log('attempting popRandomFromBucket for difficulty', d);
       if (question) {
         interview.currentPlanIndex = (interview.currentPlanIndex || 0) + 1;
         await interview.save();
