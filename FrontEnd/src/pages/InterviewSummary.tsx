@@ -55,7 +55,7 @@ export default function InterviewSummary(): JSX.Element {
     const [widgetLoaded, setWidgetLoaded] = useState(false);
     const [interviewStarted, setInterviewStarted] = useState(false);
 
-    const [scriptStatus, setScriptStatus] = useState<'idle'|'found'|'loading'|'loaded'|'error'|'ready'|'timeout'|'disabled'>('idle');
+    const [scriptStatus, setScriptStatus] = useState<'idle'|'found'|'loading'|'loaded'|'error'|'ready'|'timeout'>('idle');
     const [scriptError, setScriptError] = useState<string | null>(null);
 
     const [overallScore, setOverallScore] = useState<number | null>(null);
@@ -322,10 +322,6 @@ export default function InterviewSummary(): JSX.Element {
         }
     }
 
-    // Replace your loadAndMountWidget implementation with this.
-// It preserves your state setters: setWidgetLoaded, setScriptError, setScriptStatus, etc.
-// It expects import.meta.env.VITE_ELEVEN_AGENT_ID and import.meta.env.VITE_DISABLE_CONVAI_WIDGET (string "1"/"true" or empty).
-
     async function loadAndMountWidget(fullSystemPrompt: string, questionsArray: QuestionItem[]) {
         removeMountedWidgetElement();
         setWidgetLoaded(false);
@@ -333,41 +329,53 @@ export default function InterviewSummary(): JSX.Element {
         setScriptStatus('idle');
 
         const ELEMENT_NAME = "elevenlabs-convai";
+        // Use the recommended src (simplify from candidates for stability)
         const SCRIPT_SRC = "https://unpkg.com/@elevenlabs/convai-widget-embed";
-        const AGENT_ID = import.meta.env.VITE_ELEVEN_AGENT_ID;
-        const DISABLE_WIDGET = !!(import.meta.env.VITE_DISABLE_CONVAI_WIDGET && String(import.meta.env.VITE_DISABLE_CONVAI_WIDGET).toLowerCase() !== 'false');
 
+        // poll helper: wait until customElements has the element or until timeout
         const waitForElementRegistered = async (elementName: string, maxWaitMs = 5000, interval = 150) => {
             const start = Date.now();
             while (Date.now() - start < maxWaitMs) {
-            if (customElements && customElements.get(elementName)) return true;
-            await new Promise((r) => setTimeout(r, interval));
+                if (customElements && customElements.get(elementName)) {
+                    return true;
+                }
+                await new Promise((r) => setTimeout(r, interval));
             }
             return false;
         };
 
         const createWidget = () => {
             try {
+                // if custom element still not registered, abort
                 if (!customElements.get(ELEMENT_NAME)) {
                     console.warn("custom element not yet registered:", ELEMENT_NAME);
                     return false;
                 }
+                console.log("Creating widget element: ", customElements.get(ELEMENT_NAME));
                 removeMountedWidgetElement();
                 const container = document.getElementById("widget-container");
                 if (!container) throw new Error("widget container missing");
 
                 const widgetEl = document.createElement(ELEMENT_NAME) as HTMLElement;
-                if (!AGENT_ID) throw new Error("Missing agent id (VITE_ELEVEN_AGENT_ID)");
 
+                // IMPORTANT: set your agent id here (required for the widget to fetch agent config and render)
+                const AGENT_ID = import.meta.env.VITE_ELEVEN_AGENT_ID; // <- replace with your actual agent id
                 widgetEl.setAttribute("agent-id", AGENT_ID);
+                try { (widgetEl as any)["agent-id"] = AGENT_ID; } catch {}
+
+                // Set system prompt override (required)
                 widgetEl.setAttribute("override-prompt", fullSystemPrompt);
-                widgetEl.style.display = "block";
-                widgetEl.style.minHeight = "240px";
-                widgetEl.style.width = "100%";
+
+                // ensure widget is visible even if stylesheet is slow to load
+                try {
+                    widgetEl.style.display = "block";
+                    widgetEl.style.minHeight = "240px";
+                    widgetEl.style.width = "100%";
+                } catch {}
 
                 if (interviewId) {
                     try {
-                        widgetEl.setAttribute("dynamic-variables", JSON.stringify({ interviewId }));
+                        widgetEl.setAttribute("dynamic-variables", JSON.stringify({ interviewId: interviewId }));
                         (widgetEl as any).metadata = { interviewId };
                     } catch {}
                 }
@@ -376,33 +384,36 @@ export default function InterviewSummary(): JSX.Element {
                 widgetRef.current = widgetEl;
                 setWidgetLoaded(true);
 
+                // small debug log (updated to log overrides)
                 setTimeout(() => {
                     try {
-                        console.log("Widget mounted. element attributes/properties:", {
-                        agentIdAttr: widgetEl.getAttribute("agent-id"),
-                        overridePromptAttr: widgetEl.getAttribute("override-prompt"),
-                    });
+                            console.log("Widget mounted. element attributes/properties:", {
+                            agentIdAttr: widgetEl.getAttribute("agent-id"),
+                            overridePromptAttr: widgetEl.getAttribute("override-prompt"),
+                        });
                     } catch (e) {
                         console.warn("post-mount inspect failed", e);
                     }
                 }, 600);
 
-                widgetEl.addEventListener('user_transcript', (e: Event) => {
+                widgetEl.addEventListener('user_transcript', (e) => {
                     const event = e as CustomEvent;
                     const detail = event.detail;
                     if (detail?.user_transcript) {
                         setTranscript((prev) => [...prev, { role: 'user', text: detail.user_transcript, questionId: detail.question_id || null }]);
+                        // Optionally send to backend via fetch to persist
                     }
-                    console.log('User transcript (widget):', detail);
+                    console.log('User transcript:', detail);
                 });
 
-                widgetEl.addEventListener('agent_response', (e: Event) => {
+                // Listen for agent responses (fired with agent's message)
+                widgetEl.addEventListener('agent_response', (e) => {
                     const event = e as CustomEvent;
                     const detail = event.detail;
                     if (detail?.text) {
                         setTranscript((prev) => [...prev, { role: 'agent', text: detail.text, questionId: detail.question_id || null }]);
                     }
-                    console.log('Agent response (widget):', detail);
+                    console.log('Agent response:', detail);
                 });
 
                 return true;
@@ -413,164 +424,72 @@ export default function InterviewSummary(): JSX.Element {
             }
         };
 
-        // --- NEW: placeholder creation for disabled mode ---
-        const createPlaceholderWidget = () => {
-            try {
-            removeMountedWidgetElement();
-            const container = document.getElementById("widget-container");
-            if (!container) throw new Error("widget container missing");
-
-            // a simple placeholder UI for debugging / platforms that block third-party storage
-            const placeholder = document.createElement("div");
-            placeholder.id = "convai-widget-placeholder";
-            placeholder.style.border = "1px dashed #888";
-            placeholder.style.padding = "12px";
-            placeholder.style.minHeight = "200px";
-            placeholder.style.display = "flex";
-            placeholder.style.flexDirection = "column";
-            placeholder.style.gap = "8px";
-
-            const title = document.createElement("div");
-            title.innerText = "ConvAI widget disabled (tracking prevention). Placeholder active.";
-            title.style.fontWeight = "600";
-            placeholder.appendChild(title);
-
-            const info = document.createElement("div");
-            info.innerText = "To enable the full widget, set VITE_DISABLE_CONVAI_WIDGET to false or self-host the widget bundle.";
-            placeholder.appendChild(info);
-
-            // a small textarea to paste or simulate a user transcript and emit user_transcript event
-            const ta = document.createElement("textarea");
-            ta.rows = 4;
-            ta.placeholder = "Paste or type a simulated user transcript and press 'Emit user_transcript'";
-            placeholder.appendChild(ta);
-
-            const btnRow = document.createElement("div");
-            btnRow.style.display = "flex";
-            btnRow.style.gap = "8px";
-
-            const emitUserBtn = document.createElement("button");
-            emitUserBtn.innerText = "Emit user_transcript";
-            emitUserBtn.onclick = () => {
-                const payload = {
-                user_transcript: ta.value || "simulated answer",
-                question_id: null
-                };
-                const ev = new CustomEvent("user_transcript", { detail: payload });
-                // bubble on container so app listeners pick it up
-                container.dispatchEvent(ev);
-                // also call the local handler if present
-                setTranscript((prev) => [...prev, { role: 'user', text: payload.user_transcript, questionId: null }]);
-                console.log("Simulated user_transcript emitted:", payload);
-            };
-            btnRow.appendChild(emitUserBtn);
-
-            const emitAgentBtn = document.createElement("button");
-            emitAgentBtn.innerText = "Emit agent_response";
-            emitAgentBtn.onclick = () => {
-                const payload = { text: "Simulated agent reply", question_id: null };
-                const ev = new CustomEvent("agent_response", { detail: payload });
-                container.dispatchEvent(ev);
-                setTranscript((prev) => [...prev, { role: 'agent', text: payload.text, questionId: null }]);
-                console.log("Simulated agent_response emitted:", payload);
-            };
-            btnRow.appendChild(emitAgentBtn);
-
-            placeholder.appendChild(btnRow);
-            container.appendChild(placeholder);
-
-            // store reference so removeMountedWidgetElement can clean it up
-            widgetRef.current = placeholder as any;
-            setWidgetLoaded(false);
-            setScriptStatus('disabled');
-            setScriptError('Widget disabled due to Tracking Prevention or explicit config.');
-
-            return true;
-            } catch (err) {
-            console.error("createPlaceholderWidget error", err);
-            setScriptError(String(err));
-            setScriptStatus('error');
-            return false;
-        }
-    };
-
-    try {
-        // If the widget is explicitly disabled via env, skip script injection and mount placeholder
-        if (DISABLE_WIDGET) {
-        console.warn("ConvAI widget loading disabled via VITE_DISABLE_CONVAI_WIDGET. Mounting placeholder instead.");
-        createPlaceholderWidget();
-        return;
-        }
-
-        // existing behavior preserved below: check registration, attempt script injection, etc.
-        if (customElements && customElements.get(ELEMENT_NAME)) {
-        setScriptStatus('ready');
-        const created = createWidget();
-        if (created) return;
-        }
-
-        const existingScript = Array.from(document.getElementsByTagName("script")).find((s) => s.src === SCRIPT_SRC);
-        if (existingScript) {
-        setScriptStatus('found');
-        const registered = await waitForElementRegistered(ELEMENT_NAME, 4000, 150);
-        if (registered) {
-            setScriptStatus('ready');
-            const ok = createWidget();
-            if (ok) return;
-        } else {
-            console.warn("Existing script found but element not registered after wait");
-        }
-        }
-
-        setScriptStatus('loading');
-        const script = document.createElement("script");
-        script.src = SCRIPT_SRC;
-        script.async = true;
-        script.type = "text/javascript";
-        scriptRef.current = script;
-
-        const loadPromise = new Promise<void>((resolve, reject) => {
-        script.addEventListener("load", () => resolve(), { once: true });
-        script.addEventListener("error", (e) => reject(new Error(`Script load error for ${SCRIPT_SRC}`)), { once: true });
-        setTimeout(() => reject(new Error(`Timeout loading script ${SCRIPT_SRC}`)), 6000);
-        });
-
-        document.body.appendChild(script);
         try {
-        await loadPromise;
-        setScriptStatus('loaded');
+            // If element already registered, try create immediately
+            if (customElements && customElements.get(ELEMENT_NAME)) {
+                setScriptStatus('ready');
+                const created = createWidget();
+                if (created) return;
+            }
+
+            // Check if script already present
+            const existingScript = Array.from(document.getElementsByTagName("script")).find((s) => s.src === SCRIPT_SRC);
+
+            if (existingScript) {
+                setScriptStatus('found');
+                console.log("Found existing widget script:", existingScript.src);
+                const registered = await waitForElementRegistered(ELEMENT_NAME, 4000, 150);
+                if (registered) {
+                    setScriptStatus('ready');
+                    const ok = createWidget();
+                    if (ok) return;
+                } else {
+                    console.warn("Existing script found but element not registered after wait");
+                }
+            }
+
+            // Inject script if not found
+            setScriptStatus('loading');
+            const script = document.createElement("script");
+            script.src = SCRIPT_SRC;
+            script.async = true;
+            script.type = "text/javascript";
+            scriptRef.current = script;
+            const loadPromise = new Promise<void>((resolve, reject) => {
+                script.addEventListener("load", () => resolve(), { once: true });
+                script.addEventListener("error", (e) => reject(new Error(`Script load error for ${SCRIPT_SRC}`)), { once: true });
+                setTimeout(() => reject(new Error(`Timeout loading script ${SCRIPT_SRC}`)), 6000);
+            });
+            document.body.appendChild(script);
+            try {
+                await loadPromise;
+                setScriptStatus('loaded');
+            } catch (err: any) {
+                console.warn("Script load failed for", SCRIPT_SRC, err);
+                script.remove();
+                scriptRef.current = null;
+                setScriptError(String(err?.message || err));
+                setScriptStatus('error');
+                return; // No more candidates, so exit
+            }
+
+            // After load, wait for registration
+            const registered = await waitForElementRegistered(ELEMENT_NAME, 5000, 150);
+            if (registered) {
+                setScriptStatus('ready');
+                const ok = createWidget();
+                if (ok) return;
+            } else {
+                setScriptStatus('timeout');
+                setScriptError(`Element ${ELEMENT_NAME} not registered after script load`);
+            }
         } catch (err: any) {
-        console.warn("Script load failed for", SCRIPT_SRC, err);
-        script.remove();
-        scriptRef.current = null;
-        setScriptError(String(err?.message || err));
-        setScriptStatus('error');
-
-        // If the script failed to load due to tracking prevention, mount placeholder
-        createPlaceholderWidget();
-        return;
+            console.error("loadAndMountWidget top-level error", err);
+            setScriptError(String(err?.message || err));
+            setScriptStatus('error');
         }
-
-        const registered = await waitForElementRegistered(ELEMENT_NAME, 5000, 150);
-        if (registered) {
-        setScriptStatus('ready');
-        const ok = createWidget();
-        if (ok) return;
-        } else {
-        setScriptStatus('timeout');
-        setScriptError(`Element ${ELEMENT_NAME} not registered after script load`);
-        // fallback to placeholder
-        createPlaceholderWidget();
-        }
-    } catch (err: any) {
-        console.error("loadAndMountWidget top-level error", err);
-        setScriptError(String(err?.message || err));
-        setScriptStatus('error');
-        // ensure placeholder exists so UI remains usable
-        createPlaceholderWidget();
     }
-    }
-
+    
     // Primary "Start interview" orchestration
     const startInterview = async () => {
         setError(null);
@@ -738,7 +657,7 @@ export default function InterviewSummary(): JSX.Element {
                 } 
                 catch(e) 
                     {}
-
+                // 2) If widget offers a refresh method, call it. If not, re-mount the widget (fallback below)
                 if (typeof (el as any).refresh === 'function') {
                     console.log("Calling widget refresh() to apply new question");
                     (el as any).refresh();
