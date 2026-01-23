@@ -12,6 +12,8 @@ config({ path: "./back.env" });
 
 const router = express.Router();
 
+const mcpClients = new Map();
+
 // function verifyWebhook(req, res, next) {
 //   const secret = process.env.WEBHOOK_SECRET;
 //   if (!secret) {
@@ -232,6 +234,7 @@ router.post("/save-question", async (req, res) => {
     }
 
     const interviewId = payload.interviewId || null;
+    const conversationId = payload.conversationId || null;
 
     // 2) Extract question id (tool param shape or top-level)
     const rawQ = payload.question_id || null;
@@ -357,8 +360,29 @@ router.post("/save-question", async (req, res) => {
           } : null,
           followup_prompt: nextPick.prompt ?? null
         };
-        io.to(String(interviewId)).emit('next_question', payload);
-        console.log('Emitted next_question to room', interviewId, payload.action);
+        // io.to(String(interviewId)).emit('next_question', payload);
+        // console.log('Emitted next_question to room', interviewId, payload.action);
+        console.log('[MCP] attempting to push nextQuestion via MCP SSE for conversation', conversationId);  
+        const client = mcpClients[String(conversationId)];
+        if (client && client.res && !client.res.finished) {
+          try {
+            console.log('[MCP] found active SSE client for conversation');
+            sendSSE(client.res, 'nextQuestion', payload);
+            console.log('MCP SSE pushed nextQuestion to conversation', interviewId);
+          } catch (err) {
+            console.error('Failed to push SSE nextQuestion:', err);
+          }
+        } else {
+          // fallback to existing socket.io emit so current infra still works
+          try {
+            const io = getIO();
+            io.to(String(interviewId)).emit('next_question', payload);
+            console.log('Emitted next_question to room', interviewId, payload.action);
+          } catch (err) {
+            console.error('Failed to emit next_question fallback:', err);
+          }
+        }
+
       }
     } catch (err) {
       console.error('Failed to emit next_question:', err);
@@ -377,6 +401,52 @@ router.post("/save-question", async (req, res) => {
     return res.status(500).json({ ok: false, error: String(err) });
   }
 });
+
+function sendSSE(res, eventName, dataObj) {
+  // standard SSE format:
+  // event: <name>\ndata: <json>\n\n
+  res.write(`event: ${eventName}\n`);
+  res.write(`data: ${JSON.stringify(dataObj)}\n\n`);
+}
+
+router.get('/mcp/:conversationId', (req, res) => {
+  const conversationId = String(req.params.conversationId);
+
+  // 🔴 ADD THIS BLOCK RIGHT HERE
+  // If an SSE already exists for this conversation, close it
+  const existing = mcpClients[conversationId];
+  if (existing) {
+    console.log('[MCP] closing previous SSE for conversation', conversationId);
+    try {
+      existing.res.end();
+    } catch (e) {}
+    clearInterval(existing.keepaliveInterval);
+    delete mcpClients[conversationId];
+  }
+
+  console.log('response for MCP: ', res);
+
+  // --- normal SSE setup continues ---
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  sendSSE(res, 'connected', { message: 'connected', conversationId });
+
+  const keepaliveInterval = setInterval(() => {
+    try {
+      res.write(': keepalive\n\n');
+    } catch (e) {}
+  }, 15000);
+
+  mcpClients[conversationId] = { res, keepaliveInterval };
+
+  req.on('close', () => {
+    clearInterval(keepaliveInterval);
+    delete mcpClients[conversationId];
+  });
+});
+
 
 router.post("/finish-interview", verifyWebhook, async (req, res) => {
   try {
