@@ -503,13 +503,13 @@ export default function InterviewSummary(): JSX.Element {
             setScriptStatus('error');
         }
     }
-    
+
     // Primary "Start interview" orchestration
     const startInterview = async () => {
         setError(null);
         try {
-        const id = await ensureInterviewExists();
-        const qs = await fetchSelectedQuestions(id);
+            const id = await ensureInterviewExists();
+            const qs = await fetchSelectedQuestions(id);
         if (!qs || qs.length === 0) {
             setError("No questions selected for this interview.");
             return;
@@ -521,7 +521,7 @@ export default function InterviewSummary(): JSX.Element {
         setInterviewStarted(true);
         
         } catch (err) {
-        console.error("startInterview failed", err);
+            console.error("startInterview failed", err);
         }
     };
 
