@@ -55,7 +55,7 @@ export default function InterviewSummary(): JSX.Element {
     const [widgetLoaded, setWidgetLoaded] = useState(false);
     const [interviewStarted, setInterviewStarted] = useState(false);
 
-    const [scriptStatus, setScriptStatus] = useState<'idle'|'found'|'loading'|'loaded'|'error'|'ready'|'timeout'>('idle');
+    const [scriptStatus, setScriptStatus] = useState<'idle'|'found'|'loading'|'loaded'|'error'|'ready'|'timeout'|'disabled'>('idle');
     const [scriptError, setScriptError] = useState<string | null>(null);
 
     const [overallScore, setOverallScore] = useState<number | null>(null);
@@ -329,8 +329,22 @@ export default function InterviewSummary(): JSX.Element {
         setScriptStatus('idle');
 
         const ELEMENT_NAME = "elevenlabs-convai";
-        // Use the recommended src (simplify from candidates for stability)
-        const SCRIPT_SRC = "https://unpkg.com/@elevenlabs/convai-widget-embed";
+
+        // <-- MINIMAL CHANGE: prefer a self-hosted bundle via env variable.
+        // Set VITE_CONVAI_LOCAL_BUNDLE to a same-origin path (e.g. "/vendor/convai-widget-embed.js")
+        // IMPORTANT: If this env var is not set, we DO NOT attempt to load the unpkg.com script to avoid Edge tracking-prevention blocking storage.
+        const LOCAL_BUNDLE = import.meta.env.VITE_CONVAI_LOCAL_BUNDLE || "";
+        if (!LOCAL_BUNDLE) {
+            // fail fast: do NOT load remote unpkg script (Edge will block storage). Instruct developer to self-host.
+            const msg = "ConvAI widget loading is disabled: set VITE_CONVAI_LOCAL_BUNDLE to a same-origin bundle path (e.g. /vendor/convai-widget-embed.js) and host the widget locally.";
+            console.warn(msg);
+            setScriptError(msg);
+            setScriptStatus('disabled');
+            return;
+        }
+
+        // Use the self-hosted/script path provided by env — this must be same-origin to avoid tracking-prevention issues.
+        const SCRIPT_SRC = LOCAL_BUNDLE; // e.g. "/vendor/convai-widget-embed.js"
 
         // poll helper: wait until customElements has the element or until timeout
         const waitForElementRegistered = async (elementName: string, maxWaitMs = 5000, interval = 150) => {
@@ -657,7 +671,7 @@ export default function InterviewSummary(): JSX.Element {
                 } 
                 catch(e) 
                     {}
-                    
+
                 if (typeof (el as any).refresh === 'function') {
                     console.log("Calling widget refresh() to apply new question");
                     (el as any).refresh();

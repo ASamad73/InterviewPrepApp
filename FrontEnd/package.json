@@ -11,6 +11,7 @@
   "dependencies": {
     "@clerk/clerk-react": "^5.53.7",
     "@clerk/themes": "^2.4.32",
+    "@elevenlabs/convai-widget-embed": "^0.6.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.30.1",
