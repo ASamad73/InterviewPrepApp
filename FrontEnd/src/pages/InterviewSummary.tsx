@@ -268,11 +268,15 @@ export default function InterviewSummary(): JSX.Element {
             assume any scoring outcome. After invoking the tool, wait for the orchestrator to supply the next instruction (next question, a clarification to ask, or END_INTERVIEW). 
             Do not END_INTERVIEW without the orchestrator's explicit instruction to do so.
             
-            7) Wait for orchestration instruction — **After calling 'save_question_transcript', do not ask another question or continue the interview.** Wait for the orchestrator/backend to supply 
+            7) On conversation start (tool call) — When the agent framework creates a new conversation ID for this interview, the agent must call the register_conversation tool exactly once with two parameters:
+            { "conversationId": "<the agent-provided conversation id>", "interviewId": "<the interviewId embedded in the widget context>" }.
+            This tells the backend to bind the incoming SSE/MCP connection to the interview session. Call the tool as soon as the conversation id is available, but do not call it more than once.
+
+            8) Wait for orchestration instruction — **After calling 'save_question_transcript', do not ask another question or continue the interview.** Wait for the orchestrator/backend to supply 
             the next '${currentQuestion}' (or an explicit termination command). Only after you receive the next question object from the orchestrator should you proceed to ask it. If the orchestrator 
             instead sends an explicit “END_INTERVIEW” instruction, say exactly: “Interview complete. Thank you for your time.” and terminate the session.
 
-            8) Ending the interview — If you have been given the last question and have received and acknowledged its final answer (including any clarification), follow rule 6 to save, 
+            9) Ending the interview — If you have been given the last question and have received and acknowledged its final answer (including any clarification), follow rule 6 to save, 
             then say exactly: “Interview complete. Thank you for your time.” Do not ask additional questions or continue the conversation.
 
             INTERVIEW CONTEXT:
