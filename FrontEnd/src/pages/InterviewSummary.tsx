@@ -507,15 +507,16 @@ export default function InterviewSummary(): JSX.Element {
     const startInterview = async () => {
         setError(null);
         try {
-        const id = await ensureInterviewExists();
-        const qs = await fetchSelectedQuestions(id);
+            const id = await ensureInterviewExists();
+            const qs = await fetchSelectedQuestions(id);
         if (!qs || qs.length === 0) {
             setError("No questions selected for this interview.");
             return;
         }
         const firstQuestion: AgentQuestion = {question_id: qs[0].question_id, question_text: qs[0].question_text};
-
+        console.log("Starting interview with first question:", firstQuestion.question_text);  
         const { fullSystemPrompt } = buildWidgetContext(firstQuestion);
+        console.log("Built full system prompt for widget.");
         await loadAndMountWidget(fullSystemPrompt, qs);
         setInterviewStarted(true);
         
@@ -575,7 +576,6 @@ export default function InterviewSummary(): JSX.Element {
         }
     }
     
-
     useEffect(() => {
         if (!interviewId) return;
         
