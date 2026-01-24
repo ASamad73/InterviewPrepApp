@@ -243,6 +243,16 @@ export default function InterviewSummary(): JSX.Element {
             throw new Error("Interview ID is required to build widget context.");
         }
 
+        /* 
+            2) When the conversation is created by the widget/runtime, after the first message, CALL the tool named register_conversation exactly once.
+            {
+                "conversationId": system__conversation_id,   // use the system-provided conversation id variable (use the tool UI variable picker to set this field in tool config)
+                "interviewId": interviewId                  // use the interviewId provided in the session context (dynamic variable)
+            }
+            Wait for the tool call to complete and for the server to respond with success. Do not speak while the tool call is in progress.
+
+        */
+
         // **and only after** you receive explicit permission to start the interview, 
             
         const fullSystemPrompt = `
@@ -251,37 +261,31 @@ export default function InterviewSummary(): JSX.Element {
             1) Greeting & permission — Always ask for permission to start, 
             e.g. “Thank you for joining. May I begin the interview now?” Wait for an explicit affirmative 
             (“yes”, “please start”, “go ahead”, “sure”). If the candidate’s first reply is not explicit, ask once more. Proceed only after explicit permission.
+            Do not call the save_question_transcript tool for this user response.
             
-            2) When the conversation is created by the widget/runtime, after the first message, CALL the tool named register_conversation exactly once.
-            {
-                "conversationId": system__conversation_id,   // use the system-provided conversation id variable (use the tool UI variable picker to set this field in tool config)
-                "interviewId": interviewId                  // use the interviewId provided in the session context (dynamic variable)
-            }
-            Wait for the tool call to complete and for the server to respond with success. Do not speak while the tool call is in progress.
-
-            3) Authority of questions — You MUST ONLY ask the single question provided to you for the current turn.
+            2) Authority of questions — You MUST ONLY ask the single question provided to you for the current turn.
             The orchestrator will provide exactly one question as ${currentQuestion} (with fields 'question_id' and 'question_text'). This is the question you must ask now. This applies to the first question of the interview and to every subsequent question.
             After you complete a question and save the response, the orchestrator will explicitly provide the next ${currentQuestion} in sequence. Do not assume, predict, or iterate through questions on your own.
 
-            4) Asking & waiting — For the current question: ask it exactly and concisely (use '${currentQuestion?.question_text ?? "[NO_QUESTION_PROVIDED]"}'), then wait for the candidate’s spoken answer before moving on.
+            3) Asking & waiting — For the current question: ask it exactly and concisely (use '${currentQuestion?.question_text ?? "[NO_QUESTION_PROVIDED]"}'), then wait for the candidate’s spoken answer before moving on.
 
-            5) Clarification — Do not ask clarifying questions on your own. Always accept whatever the candidate says as their final answer for the 
+            4) Clarification — Do not ask clarifying questions on your own. Always accept whatever the candidate says as their final answer for the 
             current question (even if it is short, unclear, or incomplete). Immediately proceed to save that response via the save tool (per Rule 6).
 
-            6) Skipping — If the candidate says “skip” or “pass”, acknowledge briefly (“Okay, skipping that question.”) and stop further questioning for this question. 
+            5) Skipping — If the candidate says “skip” or “pass”, acknowledge briefly (“Okay, skipping that question.”) and stop further questioning for this question. 
             Allow returning to a skipped question only if the orchestrator later supplies that question again explicitly.
             
-            7) Persistence & tool call — After receiving the candidate’s spoken answer for the current question (including any short interruptions or fragments), combine all 
+            6) Persistence & tool call — After receiving the candidate’s spoken answer for the current question (including any short interruptions or fragments), combine all 
             speech segments for that question into one coherent string, then invoke the save_question_transcript tool exactly once with parameters: question_id (from ${currentQuestion}) 
             and transcript (the candidate's full spoken answer as one string). Call this tool immediately after the candidate finishes speaking for the current question—do not wait for or 
             assume any scoring outcome. After invoking the tool, wait for the orchestrator to supply the next instruction (next question, a clarification to ask, or END_INTERVIEW). 
             Do not END_INTERVIEW without the orchestrator's explicit instruction to do so.
             
-            8) Wait for orchestration instruction — **After calling 'save_question_transcript', do not ask another question or continue the interview.** Wait for the orchestrator/backend to supply 
+            7) Wait for orchestration instruction — **After calling 'save_question_transcript', do not ask another question or continue the interview.** Wait for the orchestrator/backend to supply 
             the next '${currentQuestion}' (or an explicit termination command). Only after you receive the next question object from the orchestrator should you proceed to ask it. If the orchestrator 
             instead sends an explicit “END_INTERVIEW” instruction, say exactly: “Interview complete. Thank you for your time.” and terminate the session.
 
-            9) Ending the interview — If you have been given the last question and have received and acknowledged its final answer (including any clarification), follow rule 6 to save, 
+            8) Ending the interview — If you have been given the last question and have received and acknowledged its final answer (including any clarification), follow rule 6 to save, 
             then say exactly: “Interview complete. Thank you for your time.” Do not ask additional questions or continue the conversation.
 
             INTERVIEW CONTEXT:
@@ -570,6 +574,7 @@ export default function InterviewSummary(): JSX.Element {
             return null;
         }
     }
+    
 
     useEffect(() => {
         if (!interviewId) return;
@@ -621,7 +626,138 @@ export default function InterviewSummary(): JSX.Element {
         widgetRef.current = widgetEl;
     }
 
-    function handleNextQuestion(payload: NextQuestionPayload) {
+    async function applyRuntimeVarsToWidget(el: HTMLElement, runtimeVars: any, debug = true) {
+        console.log('Applying runtime variables to widget');
+        if (!el) throw new Error("widget element missing");
+
+        const safeJson = JSON.stringify(runtimeVars);
+
+        // 1) set attribute and property (best-effort)
+        try {
+            el.setAttribute('dynamic-variables', safeJson);
+        } catch (e) {
+            if (debug) console.warn('setAttribute(dynamic-variables) failed', e);
+        }
+        console.log(el.getAttribute('dynamic-variables'));
+        try {
+            // some builds use .metadata or .dynamicVariables property
+            (el as any).metadata = runtimeVars;
+            (el as any).dynamicVariables = runtimeVars;
+            (el as any).runtimeVariables = runtimeVars;
+        } catch (e) {
+            if (debug) console.debug('setting properties failed (ok):', e && String(e).slice(0,120));
+        }
+
+        // 2) inspect available methods/properties (very helpful for debugging)
+        try {
+            const proto = Object.getPrototypeOf(el) || {};
+            const protoNames = Object.getOwnPropertyNames(proto).sort();
+            const instNames = Object.keys(el as any).sort();
+            if (debug) {
+                console.log('widget element prototype methods:', protoNames);
+                console.log('widget element own properties:', instNames);
+                console.log('typeof refresh:', typeof (el as any).refresh);
+            }
+        } catch (e) {
+            if (debug) console.warn('failed introspecting element', e);
+        }
+
+        // 3) try calling common candidate APIs (stop at first success)
+        const methodCandidates = [
+            'refresh', 'refreshRuntime', 'update', 'updateRuntime', 'reload', 'rehydrate',
+            'setRuntimeVariables', 'setDynamicVariables', 'applyRuntimeVariables', 'setMetadata',
+            'setContext', 'setProps', 'rebind', 'resume', 'start', 'updateContext'
+        ];
+
+        for (const name of methodCandidates) {
+            try {
+            const fn = (el as any)[name];
+            if (typeof fn === 'function') {
+                console.log("Calling widget method: ", name);
+                if (debug) console.log(`Calling widget method: ${name}()`);
+                // call with runtimeVars if function accepts args, otherwise call with no args
+                try { fn.call(el, runtimeVars); } catch (e) { try { fn.call(el, safeJson); } catch (_) { fn.call(el); } }
+                return { applied: true, via: name };
+            }
+            } catch (e) {
+            if (debug) console.warn(`Calling ${name}() threw`, e);
+            }
+        }
+
+        // 4) If widget contains an iframe, use postMessage fallback (some widgets use iframe bridge)
+        try {
+            const iframe = el.querySelector && (el.querySelector('iframe') as HTMLIFrameElement | null);
+            if (iframe && iframe.contentWindow) {
+                if (debug) console.log('Posting runtime vars to iframe via postMessage');
+                iframe.contentWindow.postMessage({ type: 'elevenlabs.runtimeVars', payload: runtimeVars }, '*');
+                return { applied: true, via: 'iframe-postMessage' };
+            }
+        } catch (e) {
+            if (debug) console.warn('iframe postMessage failed', e);
+        }
+
+        // 5) Try dispatching a CustomEvent which some widgets listen to
+        try {
+            const ev = new CustomEvent('runtime-variables-update', { detail: runtimeVars, bubbles: true, composed: true });
+            el.dispatchEvent(ev);
+            if (debug) console.log('Dispatched runtime-variables-update event on widget');
+            // we cannot know if widget consumed it — just return "attempted"
+            return { applied: true, via: 'custom-event' };
+        } catch (e) {
+            if (debug) console.warn('dispatchEvent failed', e);
+        }
+
+        console.log("GOING IN PROMISE")
+        // 6) Wait a bit for methods to appear (some lazy-init widgets attach API after async load)
+        const appeared = await new Promise<{ applied: boolean; via?: string }>((resolve) => {
+            let settled = false;
+            const timer = setTimeout(() => {
+            if (!settled) { settled = true; resolve({ applied: false }); }
+            }, 3500);
+
+            const observer = new MutationObserver(() => {
+            for (const name of methodCandidates) {
+                if (typeof (el as any)[name] === 'function') {
+                    console.log('Widget method appeared via MutationObserver:', name);
+                    if (!settled) {
+                        console.log('Widget method appeared via MutationObserver !settled:');
+                        settled = true;
+                        clearTimeout(timer);
+                        observer.disconnect();
+                        try {
+                          (el as any)[name](runtimeVars);
+                        } catch (e) {}
+                        resolve({ applied: true, via: name });
+                    }
+                }
+            }
+            });
+            try { observer.observe(el as any, { attributes: true, childList: true, subtree: false }); } catch (e) {}
+
+            // also check immediate
+            for (const name of methodCandidates) {
+                if (typeof (el as any)[name] === 'function') {
+                    console.log('Widget method already present on immediate check:', name);
+                    if (!settled) {
+                        console.log('Widget method already present on immediate check !settled:');
+                        settled = true;
+                        clearTimeout(timer);
+                        observer.disconnect();
+                        try { (el as any)[name](runtimeVars); } catch (e) {}
+                        resolve({ applied: true, via: name });
+                    }
+                }
+            }
+        });
+
+        if (appeared.applied) return appeared;
+        console.log("ENDING FALSE PROMISE")
+        // 7) Last resort: return false — caller can decide to remount the widget (not recommended)
+        return { applied: false, via: 'none' };
+    }
+
+
+    async function handleNextQuestion(payload: NextQuestionPayload) {
         if (!payload) return;
         const { action, question, followup_prompt } = payload;
         
@@ -655,21 +791,31 @@ export default function InterviewSummary(): JSX.Element {
 
             const runtimeVars = {interviewId , currentQuestion: nextQuestion };
             try {
-                // 1) Update dynamic variables attribute (widget will read this)
-                el.setAttribute('dynamic-variables', JSON.stringify(runtimeVars));
-                console.log(el.getAttribute('dynamic-variables'));
-                console.log("LOGGIN METADATA");
-                console.log((el as any).metadata);
-                try { 
-                    console.log("Setting widget metadata to:", runtimeVars);
-                    (el as any).metadata = runtimeVars; 
-                } 
-                catch(e) 
-                    {}
-                // 2) If widget offers a refresh method, call it. If not, re-mount the widget (fallback below)
-                if (typeof (el as any).refresh === 'function') {
-                    console.log("Calling widget refresh() to apply new question");
-                    (el as any).refresh();
+                // // 1) Update dynamic variables attribute (widget will read this)
+                // el.setAttribute('dynamic-variables', JSON.stringify(runtimeVars));
+                // console.log(el.getAttribute('dynamic-variables'));
+                // console.log("LOGGIN METADATA");
+                // console.log((el as any).metadata);
+                // try { 
+                //     console.log("Setting widget metadata to:", runtimeVars);
+                //     (el as any).metadata = runtimeVars; 
+                // } 
+                // catch(e) 
+                //     {}
+                // // 2) If widget offers a refresh method, call it. If not, re-mount the widget (fallback below)
+                // if (typeof (el as any).refresh === 'function') {
+                //     console.log("Calling widget refresh() to apply new question");
+                //     (el as any).refresh();
+                //     return;
+                // }
+                // const result = await applyRuntimeVarsToWidget(el!, runtimeVars, true);
+                console.log("Applying runtime variables to widget for next question:", runtimeVars);
+                const result = await applyRuntimeVarsToWidget(el!, runtimeVars, true);
+                console.log('applyRuntimeVarsToWidget result:', result);
+                if (result.applied) {
+                    // good — if widget had a real API, it probably applied. If that API expects a response,
+                    // the agent will proceed.
+                    console.log("Widget runtime variables updated successfully via:", result.via);
                     return;
                 }
             } catch (err) {
