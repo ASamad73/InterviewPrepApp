@@ -398,28 +398,28 @@ router.post("/save-question", async (req, res) => {
           } : null,
           followup_prompt: nextPick.prompt ?? null
         };
-        // io.to(String(interviewId)).emit('next_question', payload);
-        // console.log('Emitted next_question to room', interviewId, payload.action);
-        console.log('[MCP] attempting to push nextQuestion via MCP SSE for conversation', conversationId);  
-        const client = mcpClients[String(conversationId)];
-        if (client && client.res && !client.res.finished) {
-          try {
-            console.log('[MCP] found active SSE client for conversation');
-            sendSSE(client.res, 'nextQuestion', payload);
-            console.log('MCP SSE pushed nextQuestion to conversation', interviewId);
-          } catch (err) {
-            console.error('Failed to push SSE nextQuestion:', err);
-          }
-        } else {
-          // fallback to existing socket.io emit so current infra still works
-          try {
-            const io = getIO();
-            io.to(String(interviewId)).emit('next_question', payload);
-            console.log('Emitted next_question to room', interviewId, payload.action);
-          } catch (err) {
-            console.error('Failed to emit next_question fallback:', err);
-          }
-        }
+        console.log('Emitting next_question to room', interviewId, payload.action);
+        io.to(String(interviewId)).emit('next_question', payload);
+        // console.log('[MCP] attempting to push nextQuestion via MCP SSE for conversation', conversationId);  
+        // const client = mcpClients[String(conversationId)];
+        // if (client && client.res && !client.res.finished) {
+        //   try {
+        //     console.log('[MCP] found active SSE client for conversation');
+        //     sendSSE(client.res, 'nextQuestion', payload);
+        //     console.log('MCP SSE pushed nextQuestion to conversation', interviewId);
+        //   } catch (err) {
+        //     console.error('Failed to push SSE nextQuestion:', err);
+        //   }
+        // } else {
+        //   // fallback to existing socket.io emit so current infra still works
+        //   try {
+        //     const io = getIO();
+        //     io.to(String(interviewId)).emit('next_question', payload);
+        //     console.log('Emitted next_question to room', interviewId, payload.action);
+        //   } catch (err) {
+        //     console.error('Failed to emit next_question fallback:', err);
+        //   }
+        // }
 
       }
     } catch (err) {
