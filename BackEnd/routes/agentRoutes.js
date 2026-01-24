@@ -203,7 +203,8 @@ const convToInterview = new Map(); // conv -> interview (in-memory)
 
 router.post('/mcp/register', async (req, res) => {
   try {
-    console.log('[MCP] register endpoint called with body:', req.body);
+    console.log('====[MCP] register endpoint called====');
+    console.log('Request body:', req.body);
     const { conversationId, interviewId } = req.body || {};
     if (!conversationId) return res.status(400).json({ ok: false, message: 'missing conversationId' });
 
@@ -270,6 +271,9 @@ router.post("/save-question", async (req, res) => {
 
     const interviewId = payload.interviewId || null;
     const conversationId = payload.conversationId || null;
+
+    console.log("conversationId:", conversationId);
+    console.log("interviewId:", interviewId);
 
     // 2) Extract question id (tool param shape or top-level)
     const rawQ = payload.question_id || null;
