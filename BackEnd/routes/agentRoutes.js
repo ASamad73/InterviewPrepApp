@@ -200,7 +200,6 @@ function isAffirmativePermissionResponse(text) {
 // top-level in your agentRoutes.js
 const convToInterview = new Map(); // conv -> interview (in-memory)
 
-
 router.post('/mcp/register', async (req, res) => {
   try {
     console.log('====[MCP] register endpoint called====');
