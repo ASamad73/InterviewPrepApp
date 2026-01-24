@@ -290,7 +290,7 @@ export default function InterviewSummary(): JSX.Element {
             IMPORTANT: 
             - Do not prompt for job info, role summary, or anything else outside the provided questions.
             - The interviewId above is a fixed identifier for this entire session.
-            - You MUST include this exact interviewId value in every call to the save_question_transcript tool.
+            - You MUST include this exact interviewId value in the call to register_conversation tool and every call to the save_question_transcript tool.
             `;
             
             // console.log('Building widget with embedded prompt:', { fullSystemPrompt, questionsList });
