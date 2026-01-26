@@ -261,7 +261,7 @@ export default function InterviewSummary(): JSX.Element {
             1) Greeting & permission — Always ask for permission to start, 
             e.g. “Thank you for joining. May I begin the interview now?” Wait for an explicit affirmative 
             (“yes”, “please start”, “go ahead”, “sure”). If the candidate’s first reply is not explicit, ask once more. Proceed only after explicit permission.
-            Do not call the save_question_transcript tool for this user response.
+            Do not invoke the save_question_transcript tool for this user response nor speak anything related to it.
             
             2) Authority of questions — You MUST ONLY ask the single question provided to you for the current turn.
             The orchestrator will provide exactly one question as ${currentQuestion} (with fields 'question_id' and 'question_text'). This is the question you must ask now. This applies to the first question of the interview and to every subsequent question.
@@ -281,13 +281,14 @@ export default function InterviewSummary(): JSX.Element {
             assume any scoring outcome. After invoking the tool, wait for the orchestrator to supply the next instruction (next question, a clarification to ask, or END_INTERVIEW). 
             Do not END_INTERVIEW without the orchestrator's explicit instruction to do so.
             
-            7) Wait for orchestration instruction — **After calling 'save_question_transcript', do not ask another question or continue the interview.** Wait for the orchestrator/backend to supply 
-            the next '${currentQuestion}' (or an explicit termination command). Only after you receive the next question object from the orchestrator should you proceed to ask it. If the orchestrator 
-            instead sends an explicit “END_INTERVIEW” instruction, say exactly: “Interview complete. Thank you for your time.” and terminate the session.
+            7) Wait for orchestration instruction — After invoking the save_question_transcript tool, stop and wait for the orchestrator/backend to provide the next "currentQuestion" or an explicit "END_INTERVIEW". 
+            The next question may arrive as a normal chat message or as runtime variables in the shape "{ currentQuestion: { question_id: "<id>", question_text: "<text>" } }". 
+            If "currentQuestion.question_text" is present, speak it exactly (do not paraphrase) and then wait for the candidate’s answer. If the runtime "currentQuestion" is malformed, 
+            say "I'm missing the next question — please provide it." and wait.
 
-            8) Ending the interview — If you have been given the last question and have received and acknowledged its final answer (including any clarification), follow rule 6 to save, 
-            then say exactly: “Interview complete. Thank you for your time.” Do not ask additional questions or continue the conversation.
-
+            8) Ending the interview — When the orchestrator sends "END_INTERVIEW" (or after the last saved question if the orchestrator indicates completion), say exactly: “Interview complete. Thank you for your time.” 
+            Do not call "save_question_transcript" for greetings/permission; only call it for actual question answers.
+            
             INTERVIEW CONTEXT:
             - interviewId: '${interviewId}'
 
@@ -296,6 +297,13 @@ export default function InterviewSummary(): JSX.Element {
             - The interviewId above is a fixed identifier for this entire session.
             - You MUST include this exact interviewId value in the call to register_conversation tool and every call to the save_question_transcript tool.
             `;
+
+            // 7) Wait for orchestration instruction — **After calling 'save_question_transcript', do not ask another question or continue the interview.** Wait for the orchestrator/backend to supply 
+            // the next '${currentQuestion}' (or an explicit termination command). Only after you receive the next question object from the orchestrator should you proceed to ask it. If the orchestrator 
+            // instead sends an explicit “END_INTERVIEW” instruction, say exactly: “Interview complete. Thank you for your time.” and terminate the session.
+            
+            // 8) Ending the interview — If you have been given the last question and have received and acknowledged its final answer (including any clarification), follow rule 6 to save, 
+            // then say exactly: “Interview complete. Thank you for your time.” Do not ask additional questions or continue the conversation.
             
             // console.log('Building widget with embedded prompt:', { fullSystemPrompt, questionsList });
         // 6) Webhook / persistence — If webhook/event hooks are configured for the embed, emit an event at the end of each question 
@@ -626,11 +634,11 @@ export default function InterviewSummary(): JSX.Element {
         widgetRef.current = widgetEl;
     }
 
-    async function applyRuntimeVarsToWidget(el: HTMLElement, runtimeVars: any, debug = true) {
+    async function applyRuntimeVarsToWidget(el: HTMLElement, currentQuestion: AgentQuestion, debug = true) {
         console.log('Applying runtime variables to widget');
         if (!el) throw new Error("widget element missing");
 
-        const safeJson = JSON.stringify(runtimeVars);
+        const safeJson = JSON.stringify(currentQuestion);
 
         // 1) set attribute and property (best-effort)
         try {
@@ -641,9 +649,9 @@ export default function InterviewSummary(): JSX.Element {
         console.log(el.getAttribute('dynamic-variables'));
         try {
             // some builds use .metadata or .dynamicVariables property
-            (el as any).metadata = runtimeVars;
-            (el as any).dynamicVariables = runtimeVars;
-            (el as any).runtimeVariables = runtimeVars;
+            (el as any).metadata = currentQuestion;
+            (el as any).dynamicVariables = currentQuestion;
+            (el as any).runtimeVariables = currentQuestion;
         } catch (e) {
             if (debug) console.debug('setting properties failed (ok):', e && String(e).slice(0,120));
         }
@@ -676,7 +684,7 @@ export default function InterviewSummary(): JSX.Element {
                 console.log("Calling widget method: ", name);
                 if (debug) console.log(`Calling widget method: ${name}()`);
                 // call with runtimeVars if function accepts args, otherwise call with no args
-                try { fn.call(el, runtimeVars); } catch (e) { try { fn.call(el, safeJson); } catch (_) { fn.call(el); } }
+                try { fn.call(el, currentQuestion); } catch (e) { try { fn.call(el, safeJson); } catch (_) { fn.call(el); } }
                 return { applied: true, via: name };
             }
             } catch (e) {
@@ -689,7 +697,7 @@ export default function InterviewSummary(): JSX.Element {
             const iframe = el.querySelector && (el.querySelector('iframe') as HTMLIFrameElement | null);
             if (iframe && iframe.contentWindow) {
                 if (debug) console.log('Posting runtime vars to iframe via postMessage');
-                iframe.contentWindow.postMessage({ type: 'elevenlabs.runtimeVars', payload: runtimeVars }, '*');
+                iframe.contentWindow.postMessage({ type: 'elevenlabs.runtimeVars', payload: currentQuestion }, '*');
                 return { applied: true, via: 'iframe-postMessage' };
             }
         } catch (e) {
@@ -698,7 +706,7 @@ export default function InterviewSummary(): JSX.Element {
 
         // 5) Try dispatching a CustomEvent which some widgets listen to
         try {
-            const ev = new CustomEvent('runtime-variables-update', { detail: runtimeVars, bubbles: true, composed: true });
+            const ev = new CustomEvent('runtime-variables-update', { detail: currentQuestion, bubbles: true, composed: true });
             el.dispatchEvent(ev);
             if (debug) console.log('Dispatched runtime-variables-update event on widget');
             // we cannot know if widget consumed it — just return "attempted"
@@ -725,7 +733,7 @@ export default function InterviewSummary(): JSX.Element {
                         clearTimeout(timer);
                         observer.disconnect();
                         try {
-                          (el as any)[name](runtimeVars);
+                          (el as any)[name](currentQuestion);
                         } catch (e) {}
                         resolve({ applied: true, via: name });
                     }
@@ -743,7 +751,7 @@ export default function InterviewSummary(): JSX.Element {
                         settled = true;
                         clearTimeout(timer);
                         observer.disconnect();
-                        try { (el as any)[name](runtimeVars); } catch (e) {}
+                        try { (el as any)[name](currentQuestion); } catch (e) {}
                         resolve({ applied: true, via: name });
                     }
                 }
@@ -789,7 +797,8 @@ export default function InterviewSummary(): JSX.Element {
         if (action === 'ask' && question) {
             console.log("Handling next question via dynamic variables update");
 
-            const runtimeVars = {interviewId , currentQuestion: nextQuestion };
+            // const runtimeVars = {interviewId , currentQuestion: nextQuestion };
+            // const runtimeVars = {interviewId, currentQuestion: nextQuestion};
             try {
                 // // 1) Update dynamic variables attribute (widget will read this)
                 // el.setAttribute('dynamic-variables', JSON.stringify(runtimeVars));
@@ -809,8 +818,8 @@ export default function InterviewSummary(): JSX.Element {
                 //     return;
                 // }
                 // const result = await applyRuntimeVarsToWidget(el!, runtimeVars, true);
-                console.log("Applying runtime variables to widget for next question:", runtimeVars);
-                const result = await applyRuntimeVarsToWidget(el!, runtimeVars, true);
+                console.log("Applying runtime variables to widget for next question: ", nextQuestion);
+                const result = await applyRuntimeVarsToWidget(el!, nextQuestion, true);
                 console.log('applyRuntimeVarsToWidget result:', result);
                 if (result.applied) {
                     // good — if widget had a real API, it probably applied. If that API expects a response,
