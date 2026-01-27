@@ -281,10 +281,9 @@ export default function InterviewSummary(): JSX.Element {
             assume any scoring outcome. After invoking the tool, wait for the orchestrator to supply the next instruction (next question, a clarification to ask, or END_INTERVIEW). 
             Do not END_INTERVIEW without the orchestrator's explicit instruction to do so.
             
-            7) Wait for orchestration instruction — After invoking the save_question_transcript tool, stop and wait for the orchestrator/backend to provide the next "currentQuestion" or an explicit "END_INTERVIEW". 
-            The next question may arrive as a normal chat message or as runtime variables in the shape "{ currentQuestion: { question_id: "<id>", question_text: "<text>" } }". 
-            If "currentQuestion.question_text" is present, speak it exactly (do not paraphrase) and then wait for the candidate’s answer. If the runtime "currentQuestion" is malformed, 
-            say "I'm missing the next question — please provide it." and wait.
+            7) Wait for orchestration instruction — After calling save_question_transcript, wait for the tool response. If a new ${currentQuestion} object is present (with question_id and question_text), 
+            ask that question exactly once. If the ${currentQuestion} object is null, say exactly “Interview complete. Thank you for your time.” and stop. 
+            Do not ask any question until you have processed the tool response.
 
             8) Ending the interview — When the orchestrator sends "END_INTERVIEW" (or after the last saved question if the orchestrator indicates completion), say exactly: “Interview complete. Thank you for your time.” 
             Do not call "save_question_transcript" for greetings/permission; only call it for actual question answers.
@@ -295,7 +294,9 @@ export default function InterviewSummary(): JSX.Element {
             IMPORTANT: 
             - Do not prompt for job info, role summary, or anything else outside the provided questions.
             - The interviewId above is a fixed identifier for this entire session.
-            - You MUST include this exact interviewId value in the call to register_conversation tool and every call to the save_question_transcript tool.
+            - You MUST include this exact interviewId in every call to the save_question_transcript tool.
+            - When you call save_question_transcript tool, the backend will return JSON that may include currentQuestion and nextAction. 
+            Wait for the response: if currentQuestion appears, you must use it as the next ${currentQuestion} and ask it.
             `;
 
             // 7) Wait for orchestration instruction — **After calling 'save_question_transcript', do not ask another question or continue the interview.** Wait for the orchestrator/backend to supply 

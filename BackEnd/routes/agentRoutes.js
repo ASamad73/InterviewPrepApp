@@ -385,21 +385,33 @@ router.post("/save-question", async (req, res) => {
 
     console.log("NEXT QUESTION: ", nextPick)
 
-    try {
-      if (nextPick) {
-        const io = getIO();
-        const payload = {
-          action: nextPick.action,
-          question: nextPick.question ? {
-            question_id: String(nextPick.question.question_id),
-            question_title: nextPick.question.question_title ?? '',
-            question_text: nextPick.question.question_text ?? '',
-            difficulty_score: Number(nextPick.question.difficulty_score ?? nextPick.question.difficulty ?? 3)
-          } : null,
-          followup_prompt: nextPick.prompt ?? null
-        };
-        console.log('Emitting next_question to room', interviewId, payload.action);
-        io.to(String(interviewId)).emit('next_question', payload);
+    if(!nextPick) {
+      console.log("No next pick returned")
+      return res.status(200).json({
+        currentQuestion: null,
+        nextAction: 'end',
+      });
+    }
+
+    const currentQuestion = {question_id: String(nextPick.question.question_id || ''), question_text: nextPick.question.question_text || ''};
+    const nextAction = nextPick.action || '';
+
+    // try {
+    //   if (nextPick) {
+    //     const io = getIO();
+        // const payload = {
+        //   action: nextPick.action,
+        //   question: nextPick.question ? {
+        //     question_id: String(nextPick.question.question_id),
+        //     question_title: nextPick.question.question_title ?? '',
+        //     question_text: nextPick.question.question_text ?? '',
+        //     difficulty_score: Number(nextPick.question.difficulty_score ?? nextPick.question.difficulty ?? 3)
+        //   } : null,
+        //   followup_prompt: nextPick.prompt ?? null
+        // };
+        // console.log('Emitting next_question to room', interviewId, payload.action);
+        // io.to(String(interviewId)).emit('next_question', payload);
+
         // console.log('[MCP] attempting to push nextQuestion via MCP SSE for conversation', conversationId);  
         // const client = mcpClients[String(conversationId)];
         // if (client && client.res && !client.res.finished) {
@@ -421,17 +433,19 @@ router.post("/save-question", async (req, res) => {
         //   }
         // }
 
-      }
-    } catch (err) {
-      console.error('Failed to emit next_question:', err);
-    }
+    //   }
+    // } catch (err) {
+    //   console.error('Failed to emit next_question:', err);
+    // }
 
     return res.status(200).json({
-      ok: true,
-      saved: true,
-      question_id: qid,
-      combined_text: perQ.combined_text,
-      scoring: scoringResult,
+      // ok: true,
+      // saved: true,
+      // question_id: qid,
+      // combined_text: perQ.combined_text,
+      // scoring: scoringResult,
+      currentQuestion, 
+      nextAction
     });
 
   } catch (err) {
