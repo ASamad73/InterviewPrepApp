@@ -196,62 +196,6 @@ function isAffirmativePermissionResponse(text) {
   return false;
 }
 
-
-// top-level in your agentRoutes.js
-const convToInterview = new Map(); // conv -> interview (in-memory)
-
-router.post('/mcp/register', async (req, res) => {
-  try {
-    console.log('====[MCP] register endpoint called====');
-    console.log('Request body:', req.body);
-    const { conversationId, interviewId } = req.body || {};
-    if (!conversationId) return res.status(400).json({ ok: false, message: 'missing conversationId' });
-
-    console.log('[MCP] register called for conversationId=', conversationId, ' interviewId=', interviewId);
-
-    // optional: verify a shared secret header (recommended)
-    // const expected = process.env.MCP_SHARED_SECRET;
-    // const provided = req.header('x-mcp-secret') || '';
-    // if (expected && provided !== expected) {
-    //   console.warn('[MCP] register auth failed');
-    //   return res.status(401).json({ ok: false, message: 'unauthorized' });
-    // }
-
-    // if an SSE already exists for this conversation, close/reclaim it
-    if (mcpClients[conversationId]) {
-      console.log('[MCP] existing SSE found for conversationId - closing previous one');
-      try { mcpClients[conversationId].res.end(); } catch (e) {}
-      clearInterval(mcpClients[conversationId].keepaliveInterval);
-      delete mcpClients[conversationId];
-    }
-
-    // if we have no pending client, register mapping and return 202 (attach when client connects)
-    const it = pendingMcpClients.values().next();
-    if (it.done) {
-      console.warn('[MCP] no pending SSE client to attach; storing mapping for later attach');
-      if (interviewId) convToInterview.set(String(conversationId), String(interviewId));
-      return res.status(202).json({ ok: true, message: 'registered mapping; no live SSE to attach yet' });
-    }
-
-    // claim the earliest pending client (FIFO)
-    const client = it.value;
-    pendingMcpClients.delete(client);
-
-    client.conversationId = String(conversationId);
-    mcpClients[String(conversationId)] = client;
-    if (interviewId) convToInterview.set(String(conversationId), String(interviewId));
-
-    // notify agent via SSE that registration succeeded
-    sendSSE(client.res, 'registered', { conversationId, interviewId: interviewId || null });
-
-    console.log('[MCP] attached SSE client to conversationId', conversationId);
-    return res.json({ ok: true, attached: true });
-  } catch (err) {
-    console.error('[MCP] register error', err && (err.stack || String(err)));
-    return res.status(500).json({ ok: false, error: String(err) });
-  }
-});
-
 // router.post("/save-question", verifyWebhook, async (req, res) => {
 // POST /api/webhooks/save-question
 router.post("/save-question", async (req, res) => {
@@ -347,7 +291,7 @@ router.post("/save-question", async (req, res) => {
       question_text: qText,
       expected_answer: expectedAnswer,
       user_response: transcriptText,
-      DEBUG: false
+      DEBUG: true
     });
 
     console.log('Scoring result for qid', qid, ':', scoringResult);
@@ -396,48 +340,6 @@ router.post("/save-question", async (req, res) => {
     const currentQuestion = {question_id: String(nextPick.question.question_id || ''), question_text: nextPick.question.question_text || ''};
     // const nextAction = nextPick.action || '';
 
-    // try {
-    //   if (nextPick) {
-    //     const io = getIO();
-        // const payload = {
-        //   action: nextPick.action,
-        //   question: nextPick.question ? {
-        //     question_id: String(nextPick.question.question_id),
-        //     question_title: nextPick.question.question_title ?? '',
-        //     question_text: nextPick.question.question_text ?? '',
-        //     difficulty_score: Number(nextPick.question.difficulty_score ?? nextPick.question.difficulty ?? 3)
-        //   } : null,
-        //   followup_prompt: nextPick.prompt ?? null
-        // };
-        // console.log('Emitting next_question to room', interviewId, payload.action);
-        // io.to(String(interviewId)).emit('next_question', payload);
-
-        // console.log('[MCP] attempting to push nextQuestion via MCP SSE for conversation', conversationId);  
-        // const client = mcpClients[String(conversationId)];
-        // if (client && client.res && !client.res.finished) {
-        //   try {
-        //     console.log('[MCP] found active SSE client for conversation');
-        //     sendSSE(client.res, 'nextQuestion', payload);
-        //     console.log('MCP SSE pushed nextQuestion to conversation', interviewId);
-        //   } catch (err) {
-        //     console.error('Failed to push SSE nextQuestion:', err);
-        //   }
-        // } else {
-        //   // fallback to existing socket.io emit so current infra still works
-        //   try {
-        //     const io = getIO();
-        //     io.to(String(interviewId)).emit('next_question', payload);
-        //     console.log('Emitted next_question to room', interviewId, payload.action);
-        //   } catch (err) {
-        //     console.error('Failed to emit next_question fallback:', err);
-        //   }
-        // }
-
-    //   }
-    // } catch (err) {
-    //   console.error('Failed to emit next_question:', err);
-    // }
-
     return res.status(200).json({
       // ok: true,
       // saved: true,
@@ -453,96 +355,6 @@ router.post("/save-question", async (req, res) => {
     return res.status(500).json({ ok: false, error: String(err) });
   }
 });
-
-function sendSSE(res, eventName, dataObj) {
-  // standard SSE format:
-  // event: <name>\ndata: <json>\n\n
-  res.write(`event: ${eventName}\n`);
-  res.write(`data: ${JSON.stringify(dataObj)}\n\n`);
-}
-
-// router.get('/mcp/:conversationId', (req, res) => {
-//   const conversationId = String(req.params.conversationId);
-
-//   // 🔴 ADD THIS BLOCK RIGHT HERE
-//   // If an SSE already exists for this conversation, close it
-//   console.log('[MCP] new SSE connection for conversation', conversationId);
-//   const existing = mcpClients[conversationId];
-//   if (existing) {
-//     console.log('[MCP] closing previous SSE for conversation', conversationId);
-//     try {
-//       existing.res.end();
-//     } catch (e) {}
-//     clearInterval(existing.keepaliveInterval);
-//     delete mcpClients[conversationId];
-//   }
-
-//   console.log('response for MCP: ', res);
-
-//   // --- normal SSE setup continues ---
-//   res.setHeader('Content-Type', 'text/event-stream');
-//   res.setHeader('Cache-Control', 'no-cache');
-//   res.setHeader('Connection', 'keep-alive');
-
-//   sendSSE(res, 'connected', { message: 'connected', conversationId });
-
-//   const keepaliveInterval = setInterval(() => {
-//     try {
-//       res.write(': keepalive\n\n');
-//     } catch (e) {}
-//   }, 15000);
-
-//   mcpClients[conversationId] = { res, keepaliveInterval };
-
-//   req.on('close', () => {
-//     clearInterval(keepaliveInterval);
-//     delete mcpClients[conversationId];
-//   });
-// });
-// GET /api/webhooks/mcp   <- static URL to put into ElevenLabs MCP config
-router.get('/mcp', (req, res) => {
-  console.log('[MCP] incoming SSE connection (no conversationId yet)');
-
-  // SSE headers
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-
-  // helper to send SSE lines
-  function sendSSELine(eventName, obj) {
-    try {
-      res.write(`event: ${eventName}\n`);
-      res.write(`data: ${JSON.stringify(obj)}\n\n`);
-    } catch (e) {
-      console.warn('[MCP] send error', e && e.message);
-    }
-  }
-
-  // send initial connected event
-  sendSSELine('connected', { message: 'connected' });
-
-  // keepalive comment every 15s to avoid proxies killing idle conns
-  const keepaliveInterval = setInterval(() => {
-    try { res.write(': keepalive\n\n'); } catch (e) {}
-  }, 15000);
-
-  // store client temporarily until we learn conversationId
-  const client = { res, keepaliveInterval, conversationId: null };
-  pendingMcpClients.add(client);
-
-  console.log('[MCP] pending clients count =', pendingMcpClients.size);
-
-  req.on('close', () => {
-    clearInterval(keepaliveInterval);
-    pendingMcpClients.delete(client);
-    if (client.conversationId) {
-      delete mcpClients[client.conversationId];
-      convToInterview.delete(client.conversationId);
-    }
-    console.log('[MCP] connection closed, pending size =', pendingMcpClients.size);
-  });
-});
-
 
 router.post("/finish-interview", verifyWebhook, async (req, res) => {
   try {

@@ -206,6 +206,7 @@ function lexicalScore(expected, response) {
    ---------------------- */
 
 function buildScoringPrompt({ questionTitle, questionText, expectedAnswer, userResponse }) {
+  console.log('Building scoring prompt with question text: ', questionText?.slice(0, 100));
   const q = (questionTitle ? `${questionTitle}\n` : "") + (questionText || "");
   return `
 You are an expert technical interviewer and a grader. Given the INTERVIEW QUESTION, the IDEAL/EXPECTED ANSWER, and the CANDIDATE RESPONSE, produce a strict JSON object (and nothing else) that evaluates the candidate response.

@@ -285,8 +285,8 @@ export default function InterviewSummary(): JSX.Element {
             ask that question exactly once. If the ${currentQuestion} object is null, say exactly “Interview complete. Thank you for your time.” and stop. 
             Do not ask any question until you have processed the tool response.
 
-            8) Ending the interview — When the orchestrator sends "END_INTERVIEW" (or after the last saved question if the orchestrator indicates completion), say exactly: “Interview complete. Thank you for your time.” 
-            Do not call "save_question_transcript" for greetings/permission; only call it for actual question answers.
+            8) Ending the interview — If the ${currentQuestion} object is null, say exactly “Interview complete. Thank you for your time.” and stop. 
+            Do not call "save_question_transcript" for this; only call it for actual question answers.
             
             INTERVIEW CONTEXT:
             - interviewId: '${interviewId}'
@@ -616,257 +616,257 @@ export default function InterviewSummary(): JSX.Element {
         };
     }, [interviewId]);
 
-    function remountWidgetWithQuestion(nextQuestion: AgentQuestion) {
-        const container = document.getElementById('widget-container');
-        if (!container) return;
+    // function remountWidgetWithQuestion(nextQuestion: AgentQuestion) {
+    //     const container = document.getElementById('widget-container');
+    //     if (!container) return;
 
-        // remove old widget
-        removeMountedWidgetElement(); // reuse your helper
+    //     // remove old widget
+    //     removeMountedWidgetElement(); // reuse your helper
 
-        // Build new override prompt that includes currentQuestion substitution (same format you used at mount)
-        const overridePrompt = buildWidgetContext(nextQuestion); // implement to return string
+    //     // Build new override prompt that includes currentQuestion substitution (same format you used at mount)
+    //     const overridePrompt = buildWidgetContext(nextQuestion); // implement to return string
 
-        // create widget again (same code as in loadAndMountWidget but pass overridePrompt and dynamic vars)
-        const widgetEl = document.createElement('elevenlabs-convai') as HTMLElement;
-        widgetEl.setAttribute('agent-id', import.meta.env.VITE_ELEVEN_AGENT_ID);
-        widgetEl.setAttribute('override-prompt', overridePrompt.fullSystemPrompt);
-        widgetEl.setAttribute('dynamic-variables', JSON.stringify({ interviewId, currentQuestion: nextQuestion }));
-        container.appendChild(widgetEl);
-        widgetRef.current = widgetEl;
-    }
+    //     // create widget again (same code as in loadAndMountWidget but pass overridePrompt and dynamic vars)
+    //     const widgetEl = document.createElement('elevenlabs-convai') as HTMLElement;
+    //     widgetEl.setAttribute('agent-id', import.meta.env.VITE_ELEVEN_AGENT_ID);
+    //     widgetEl.setAttribute('override-prompt', overridePrompt.fullSystemPrompt);
+    //     widgetEl.setAttribute('dynamic-variables', JSON.stringify({ interviewId, currentQuestion: nextQuestion }));
+    //     container.appendChild(widgetEl);
+    //     widgetRef.current = widgetEl;
+    // }
 
-    async function applyRuntimeVarsToWidget(el: HTMLElement, currentQuestion: AgentQuestion, debug = true) {
-        console.log('Applying runtime variables to widget');
-        if (!el) throw new Error("widget element missing");
+    // async function applyRuntimeVarsToWidget(el: HTMLElement, currentQuestion: AgentQuestion, debug = true) {
+    //     console.log('Applying runtime variables to widget');
+    //     if (!el) throw new Error("widget element missing");
 
-        const safeJson = JSON.stringify(currentQuestion);
+    //     const safeJson = JSON.stringify(currentQuestion);
 
-        // 1) set attribute and property (best-effort)
-        try {
-            el.setAttribute('dynamic-variables', safeJson);
-        } catch (e) {
-            if (debug) console.warn('setAttribute(dynamic-variables) failed', e);
-        }
-        console.log(el.getAttribute('dynamic-variables'));
-        try {
-            // some builds use .metadata or .dynamicVariables property
-            (el as any).metadata = currentQuestion;
-            (el as any).dynamicVariables = currentQuestion;
-            (el as any).runtimeVariables = currentQuestion;
-        } catch (e) {
-            if (debug) console.debug('setting properties failed (ok):', e && String(e).slice(0,120));
-        }
+    //     // 1) set attribute and property (best-effort)
+    //     try {
+    //         el.setAttribute('dynamic-variables', safeJson);
+    //     } catch (e) {
+    //         if (debug) console.warn('setAttribute(dynamic-variables) failed', e);
+    //     }
+    //     console.log(el.getAttribute('dynamic-variables'));
+    //     try {
+    //         // some builds use .metadata or .dynamicVariables property
+    //         (el as any).metadata = currentQuestion;
+    //         (el as any).dynamicVariables = currentQuestion;
+    //         (el as any).runtimeVariables = currentQuestion;
+    //     } catch (e) {
+    //         if (debug) console.debug('setting properties failed (ok):', e && String(e).slice(0,120));
+    //     }
 
-        // 2) inspect available methods/properties (very helpful for debugging)
-        try {
-            const proto = Object.getPrototypeOf(el) || {};
-            const protoNames = Object.getOwnPropertyNames(proto).sort();
-            const instNames = Object.keys(el as any).sort();
-            if (debug) {
-                console.log('widget element prototype methods:', protoNames);
-                console.log('widget element own properties:', instNames);
-                console.log('typeof refresh:', typeof (el as any).refresh);
-            }
-        } catch (e) {
-            if (debug) console.warn('failed introspecting element', e);
-        }
+    //     // 2) inspect available methods/properties (very helpful for debugging)
+    //     try {
+    //         const proto = Object.getPrototypeOf(el) || {};
+    //         const protoNames = Object.getOwnPropertyNames(proto).sort();
+    //         const instNames = Object.keys(el as any).sort();
+    //         if (debug) {
+    //             console.log('widget element prototype methods:', protoNames);
+    //             console.log('widget element own properties:', instNames);
+    //             console.log('typeof refresh:', typeof (el as any).refresh);
+    //         }
+    //     } catch (e) {
+    //         if (debug) console.warn('failed introspecting element', e);
+    //     }
 
-        // 3) try calling common candidate APIs (stop at first success)
-        const methodCandidates = [
-            'refresh', 'refreshRuntime', 'update', 'updateRuntime', 'reload', 'rehydrate',
-            'setRuntimeVariables', 'setDynamicVariables', 'applyRuntimeVariables', 'setMetadata',
-            'setContext', 'setProps', 'rebind', 'resume', 'start', 'updateContext'
-        ];
+    //     // 3) try calling common candidate APIs (stop at first success)
+    //     const methodCandidates = [
+    //         'refresh', 'refreshRuntime', 'update', 'updateRuntime', 'reload', 'rehydrate',
+    //         'setRuntimeVariables', 'setDynamicVariables', 'applyRuntimeVariables', 'setMetadata',
+    //         'setContext', 'setProps', 'rebind', 'resume', 'start', 'updateContext'
+    //     ];
 
-        for (const name of methodCandidates) {
-            try {
-            const fn = (el as any)[name];
-            if (typeof fn === 'function') {
-                console.log("Calling widget method: ", name);
-                if (debug) console.log(`Calling widget method: ${name}()`);
-                // call with runtimeVars if function accepts args, otherwise call with no args
-                try { fn.call(el, currentQuestion); } catch (e) { try { fn.call(el, safeJson); } catch (_) { fn.call(el); } }
-                return { applied: true, via: name };
-            }
-            } catch (e) {
-            if (debug) console.warn(`Calling ${name}() threw`, e);
-            }
-        }
+    //     for (const name of methodCandidates) {
+    //         try {
+    //         const fn = (el as any)[name];
+    //         if (typeof fn === 'function') {
+    //             console.log("Calling widget method: ", name);
+    //             if (debug) console.log(`Calling widget method: ${name}()`);
+    //             // call with runtimeVars if function accepts args, otherwise call with no args
+    //             try { fn.call(el, currentQuestion); } catch (e) { try { fn.call(el, safeJson); } catch (_) { fn.call(el); } }
+    //             return { applied: true, via: name };
+    //         }
+    //         } catch (e) {
+    //         if (debug) console.warn(`Calling ${name}() threw`, e);
+    //         }
+    //     }
 
-        // 4) If widget contains an iframe, use postMessage fallback (some widgets use iframe bridge)
-        try {
-            const iframe = el.querySelector && (el.querySelector('iframe') as HTMLIFrameElement | null);
-            if (iframe && iframe.contentWindow) {
-                if (debug) console.log('Posting runtime vars to iframe via postMessage');
-                iframe.contentWindow.postMessage({ type: 'elevenlabs.runtimeVars', payload: currentQuestion }, '*');
-                return { applied: true, via: 'iframe-postMessage' };
-            }
-        } catch (e) {
-            if (debug) console.warn('iframe postMessage failed', e);
-        }
+    //     // 4) If widget contains an iframe, use postMessage fallback (some widgets use iframe bridge)
+    //     try {
+    //         const iframe = el.querySelector && (el.querySelector('iframe') as HTMLIFrameElement | null);
+    //         if (iframe && iframe.contentWindow) {
+    //             if (debug) console.log('Posting runtime vars to iframe via postMessage');
+    //             iframe.contentWindow.postMessage({ type: 'elevenlabs.runtimeVars', payload: currentQuestion }, '*');
+    //             return { applied: true, via: 'iframe-postMessage' };
+    //         }
+    //     } catch (e) {
+    //         if (debug) console.warn('iframe postMessage failed', e);
+    //     }
 
-        // 5) Try dispatching a CustomEvent which some widgets listen to
-        try {
-            const ev = new CustomEvent('runtime-variables-update', { detail: currentQuestion, bubbles: true, composed: true });
-            el.dispatchEvent(ev);
-            if (debug) console.log('Dispatched runtime-variables-update event on widget');
-            // we cannot know if widget consumed it — just return "attempted"
-            return { applied: true, via: 'custom-event' };
-        } catch (e) {
-            if (debug) console.warn('dispatchEvent failed', e);
-        }
+    //     // 5) Try dispatching a CustomEvent which some widgets listen to
+    //     try {
+    //         const ev = new CustomEvent('runtime-variables-update', { detail: currentQuestion, bubbles: true, composed: true });
+    //         el.dispatchEvent(ev);
+    //         if (debug) console.log('Dispatched runtime-variables-update event on widget');
+    //         // we cannot know if widget consumed it — just return "attempted"
+    //         return { applied: true, via: 'custom-event' };
+    //     } catch (e) {
+    //         if (debug) console.warn('dispatchEvent failed', e);
+    //     }
 
-        console.log("GOING IN PROMISE")
-        // 6) Wait a bit for methods to appear (some lazy-init widgets attach API after async load)
-        const appeared = await new Promise<{ applied: boolean; via?: string }>((resolve) => {
-            let settled = false;
-            const timer = setTimeout(() => {
-            if (!settled) { settled = true; resolve({ applied: false }); }
-            }, 3500);
+    //     console.log("GOING IN PROMISE")
+    //     // 6) Wait a bit for methods to appear (some lazy-init widgets attach API after async load)
+    //     const appeared = await new Promise<{ applied: boolean; via?: string }>((resolve) => {
+    //         let settled = false;
+    //         const timer = setTimeout(() => {
+    //         if (!settled) { settled = true; resolve({ applied: false }); }
+    //         }, 3500);
 
-            const observer = new MutationObserver(() => {
-            for (const name of methodCandidates) {
-                if (typeof (el as any)[name] === 'function') {
-                    console.log('Widget method appeared via MutationObserver:', name);
-                    if (!settled) {
-                        console.log('Widget method appeared via MutationObserver !settled:');
-                        settled = true;
-                        clearTimeout(timer);
-                        observer.disconnect();
-                        try {
-                          (el as any)[name](currentQuestion);
-                        } catch (e) {}
-                        resolve({ applied: true, via: name });
-                    }
-                }
-            }
-            });
-            try { observer.observe(el as any, { attributes: true, childList: true, subtree: false }); } catch (e) {}
+    //         const observer = new MutationObserver(() => {
+    //         for (const name of methodCandidates) {
+    //             if (typeof (el as any)[name] === 'function') {
+    //                 console.log('Widget method appeared via MutationObserver:', name);
+    //                 if (!settled) {
+    //                     console.log('Widget method appeared via MutationObserver !settled:');
+    //                     settled = true;
+    //                     clearTimeout(timer);
+    //                     observer.disconnect();
+    //                     try {
+    //                       (el as any)[name](currentQuestion);
+    //                     } catch (e) {}
+    //                     resolve({ applied: true, via: name });
+    //                 }
+    //             }
+    //         }
+    //         });
+    //         try { observer.observe(el as any, { attributes: true, childList: true, subtree: false }); } catch (e) {}
 
-            // also check immediate
-            for (const name of methodCandidates) {
-                if (typeof (el as any)[name] === 'function') {
-                    console.log('Widget method already present on immediate check:', name);
-                    if (!settled) {
-                        console.log('Widget method already present on immediate check !settled:');
-                        settled = true;
-                        clearTimeout(timer);
-                        observer.disconnect();
-                        try { (el as any)[name](currentQuestion); } catch (e) {}
-                        resolve({ applied: true, via: name });
-                    }
-                }
-            }
-        });
+    //         // also check immediate
+    //         for (const name of methodCandidates) {
+    //             if (typeof (el as any)[name] === 'function') {
+    //                 console.log('Widget method already present on immediate check:', name);
+    //                 if (!settled) {
+    //                     console.log('Widget method already present on immediate check !settled:');
+    //                     settled = true;
+    //                     clearTimeout(timer);
+    //                     observer.disconnect();
+    //                     try { (el as any)[name](currentQuestion); } catch (e) {}
+    //                     resolve({ applied: true, via: name });
+    //                 }
+    //             }
+    //         }
+    //     });
 
-        if (appeared.applied) return appeared;
-        console.log("ENDING FALSE PROMISE")
-        // 7) Last resort: return false — caller can decide to remount the widget (not recommended)
-        return { applied: false, via: 'none' };
-    }
+    //     if (appeared.applied) return appeared;
+    //     console.log("ENDING FALSE PROMISE")
+    //     // 7) Last resort: return false — caller can decide to remount the widget (not recommended)
+    //     return { applied: false, via: 'none' };
+    // }
 
 
-    async function handleNextQuestion(payload: NextQuestionPayload) {
-        if (!payload) return;
-        const { action, question, followup_prompt } = payload;
+    // async function handleNextQuestion(payload: NextQuestionPayload) {
+    //     if (!payload) return;
+    //     const { action, question, followup_prompt } = payload;
         
-        if(!question.question_id || !question.question_text){
-            console.error("Next question payload is missing required fields");
-            return;
-        }
+    //     if(!question.question_id || !question.question_text){
+    //         console.error("Next question payload is missing required fields");
+    //         return;
+    //     }
 
-        const nextQuestion: AgentQuestion = {question_id: question?.question_id, question_text: question.question_text};
+    //     const nextQuestion: AgentQuestion = {question_id: question?.question_id, question_text: question.question_text};
 
-        // If followup prompt -> ask followup via the widget
-        const el = widgetRef.current;
-        if(!el) throw new Error("Widget element not found in handleNextQuestion");
+    //     // If followup prompt -> ask followup via the widget
+    //     const el = widgetRef.current;
+    //     if(!el) throw new Error("Widget element not found in handleNextQuestion");
 
-        if (action === 'followup' && followup_prompt) {
-            console.log("Handling followup prompt via widget API");
-            // Some widgets expose custom API; try a best-effort call:
-            try {
-                if ((el as any).callRuntimeAction) {
-                    (el as any).callRuntimeAction('ask_followup', { prompt: followup_prompt });
-                    return;
-                }
-            } catch (e) {
-                console.warn('widget runtime call failed', e);
-                return;
-            }
-        }
+    //     if (action === 'followup' && followup_prompt) {
+    //         console.log("Handling followup prompt via widget API");
+    //         // Some widgets expose custom API; try a best-effort call:
+    //         try {
+    //             if ((el as any).callRuntimeAction) {
+    //                 (el as any).callRuntimeAction('ask_followup', { prompt: followup_prompt });
+    //                 return;
+    //             }
+    //         } catch (e) {
+    //             console.warn('widget runtime call failed', e);
+    //             return;
+    //         }
+    //     }
 
-        if (action === 'ask' && question) {
-            console.log("Handling next question via dynamic variables update");
+    //     if (action === 'ask' && question) {
+    //         console.log("Handling next question via dynamic variables update");
 
-            // const runtimeVars = {interviewId , currentQuestion: nextQuestion };
-            // const runtimeVars = {interviewId, currentQuestion: nextQuestion};
-            try {
-                // // 1) Update dynamic variables attribute (widget will read this)
-                // el.setAttribute('dynamic-variables', JSON.stringify(runtimeVars));
-                // console.log(el.getAttribute('dynamic-variables'));
-                // console.log("LOGGIN METADATA");
-                // console.log((el as any).metadata);
-                // try { 
-                //     console.log("Setting widget metadata to:", runtimeVars);
-                //     (el as any).metadata = runtimeVars; 
-                // } 
-                // catch(e) 
-                //     {}
-                // // 2) If widget offers a refresh method, call it. If not, re-mount the widget (fallback below)
-                // if (typeof (el as any).refresh === 'function') {
-                //     console.log("Calling widget refresh() to apply new question");
-                //     (el as any).refresh();
-                //     return;
-                // }
-                // const result = await applyRuntimeVarsToWidget(el!, runtimeVars, true);
-                console.log("Applying runtime variables to widget for next question: ", nextQuestion);
-                const result = await applyRuntimeVarsToWidget(el!, nextQuestion, true);
-                console.log('applyRuntimeVarsToWidget result:', result);
-                if (result.applied) {
-                    // good — if widget had a real API, it probably applied. If that API expects a response,
-                    // the agent will proceed.
-                    console.log("Widget runtime variables updated successfully via:", result.via);
-                    return;
-                }
-            } catch (err) {
-                console.warn('Failed to update widget runtime variables:', err);
-                return;
-            }
-        }
+    //         // const runtimeVars = {interviewId , currentQuestion: nextQuestion };
+    //         // const runtimeVars = {interviewId, currentQuestion: nextQuestion};
+    //         try {
+    //             // // 1) Update dynamic variables attribute (widget will read this)
+    //             // el.setAttribute('dynamic-variables', JSON.stringify(runtimeVars));
+    //             // console.log(el.getAttribute('dynamic-variables'));
+    //             // console.log("LOGGIN METADATA");
+    //             // console.log((el as any).metadata);
+    //             // try { 
+    //             //     console.log("Setting widget metadata to:", runtimeVars);
+    //             //     (el as any).metadata = runtimeVars; 
+    //             // } 
+    //             // catch(e) 
+    //             //     {}
+    //             // // 2) If widget offers a refresh method, call it. If not, re-mount the widget (fallback below)
+    //             // if (typeof (el as any).refresh === 'function') {
+    //             //     console.log("Calling widget refresh() to apply new question");
+    //             //     (el as any).refresh();
+    //             //     return;
+    //             // }
+    //             // const result = await applyRuntimeVarsToWidget(el!, runtimeVars, true);
+    //             console.log("Applying runtime variables to widget for next question: ", nextQuestion);
+    //             const result = await applyRuntimeVarsToWidget(el!, nextQuestion, true);
+    //             console.log('applyRuntimeVarsToWidget result:', result);
+    //             if (result.applied) {
+    //                 // good — if widget had a real API, it probably applied. If that API expects a response,
+    //                 // the agent will proceed.
+    //                 console.log("Widget runtime variables updated successfully via:", result.via);
+    //                 return;
+    //             }
+    //         } catch (err) {
+    //             console.warn('Failed to update widget runtime variables:', err);
+    //             return;
+    //         }
+    //     }
         
-        console.log("GETTING TO FALLBACK FOR NEXT-QUESTION")
-        // remountWidgetWithQuestion(nextQuestion);
-    }
+    //     console.log("GETTING TO FALLBACK FOR NEXT-QUESTION")
+    //     // remountWidgetWithQuestion(nextQuestion);
+    // }
 
-    useEffect(() => {
-        if (!interviewId) return;
-        console.log("Setting up WebSocket in useEffect: ", API);
-        socket = ioClient(API, { path: '/socket.io', transports: ['websocket', 'polling'] });
+    // useEffect(() => {
+    //     if (!interviewId) return;
+    //     console.log("Setting up WebSocket in useEffect: ", API);
+    //     socket = ioClient(API, { path: '/socket.io', transports: ['websocket', 'polling'] });
 
-        socket.on('connect', () => {
-            console.log('socket connected', socket.id);
-            socket.emit('join_interview', { interviewId });
-        });
+    //     socket.on('connect', () => {
+    //         console.log('socket connected', socket.id);
+    //         socket.emit('join_interview', { interviewId });
+    //     });
 
-         socket.on('connect_timeout', (t: number) => {
-            console.warn('socket connect_timeout', t);
-        });
+    //      socket.on('connect_timeout', (t: number) => {
+    //         console.warn('socket connect_timeout', t);
+    //     });
 
-        socket.on('reconnect_attempt', (n: number) => {
-            console.log('socket reconnect_attempt', n);
-        });
+    //     socket.on('reconnect_attempt', (n: number) => {
+    //         console.log('socket reconnect_attempt', n);
+    //     });
 
-        socket.on('next_question', (payload: NextQuestionPayload) => {
-            console.log('received next_question', payload);
-            handleNextQuestion(payload);
-        });
+    //     socket.on('next_question', (payload: NextQuestionPayload) => {
+    //         console.log('received next_question', payload);
+    //         handleNextQuestion(payload);
+    //     });
 
-        socket.on('disconnect', () => console.log('socket disconnected'));
+    //     socket.on('disconnect', () => console.log('socket disconnected'));
 
-        return () => {
-            try { socket.disconnect(); } catch (e) {}
-        };
-    }, [interviewId]);
+    //     return () => {
+    //         try { socket.disconnect(); } catch (e) {}
+    //     };
+    // }, [interviewId]);
 
     return (
         <main className="min-h-[calc(100vh-4rem)] bg-[#0c0c0c] px-6 py-10">

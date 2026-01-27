@@ -21,7 +21,7 @@ export function initSocket(server, opts = {}) {
 
   // optional: attach basic connection handler
   ioInstance.on("connection", (socket) => {
-    console.log("🔌 A user connected:", socket.id);
+    console.log(" A user connected:", socket.id);
 
     socket.on("join_interview", (payload) => {
       const interviewId = payload?.interviewId;
