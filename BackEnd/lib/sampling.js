@@ -384,7 +384,7 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
   // totalToAsk: prefer stored interview.totalToAsk if present, otherwise fall back to samplingPlan length
   // const totalToAsk = Number.isFinite(interview.totalToAsk)
   const totalToAsk = interview.selectedQuestions.length / 3;
-  
+
   // helper to persist and return an 'ask' action.
   // consumePlan: whether this question consumes one slot from samplingPlan (and thus increments currentPlanIndex)
   async function askAndSave(question, consumePlan = false) {
@@ -398,7 +398,7 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
     }
     // If we've reached or exceeded the requested total, mark finalized (optional)
     if (interview.questionsAskedCount >= totalToAsk) {
-      interview.status = 'finalized';
+      interview.status = 'completed';
     }
     await interview.save();
     return { action: 'ask', question };
@@ -414,7 +414,7 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
 
   // Safety: if we've already asked the planned number of questions, finalize
   if (interview.questionsAskedCount >= totalToAsk) {
-    interview.status = 'finalized';
+    interview.status = 'completed';
     await interview.save();
     return { action: "end" };
   }
@@ -482,7 +482,7 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
 
     // 5) nothing left anywhere: finalize only if we've already reached planned count OR absolutely nothing left
     if (!hasAnyAvailableQuestions(interview.buckets, interview.extras) || interview.questionsAskedCount >= totalToAsk) {
-      interview.status = 'finalized';
+      interview.status = 'completed';
       await interview.save();
       return { action: 'end' };
     }
@@ -547,7 +547,7 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
 
   // FINAL: only finalize if we've exhausted all sources OR we've already reached totalToAsk
   if (!hasAnyAvailableQuestions(interview.buckets, interview.extras) || interview.questionsAskedCount >= totalToAsk) {
-    interview.status = 'finalized';
+    interview.status = 'completed';
     await interview.save();
     return { action: 'end' };
   }
@@ -561,7 +561,7 @@ export async function selectNextQuestion(interviewId, prevQid, scoringResult = {
   }
 
   // Nothing left — final end
-  interview.status = 'finalized';
+  interview.status = 'completed';
   await interview.save();
   return { action: 'end' };
 }
