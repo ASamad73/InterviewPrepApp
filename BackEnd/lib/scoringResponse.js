@@ -45,9 +45,7 @@ async function callGemini(prompt, retry = 0, DEBUG = false) {
     });
 
     const text = await res.text();
-
-    console.log('Gemini response text:', text.slice(0, 100)); // log first 500 chars
-
+    
     if (!res.ok) {
       console.error(`Gemini API error: HTTP ${res.status} - ${res.statusText}`);
       const snippet = text ? text.slice(0, 1000) : "";
@@ -55,6 +53,8 @@ async function callGemini(prompt, retry = 0, DEBUG = false) {
       err.status = res.status;
       throw err;
     }
+
+    console.log('Gemini response text:', text.slice(0, 100)); // log first 500 chars
 
     // Try parse JSON-like SDK response or return raw body
     try {
@@ -438,6 +438,7 @@ export async function scoreSingleQuestion({
       response: user_response ?? '',
     };
 
+    console.log('Scoring single question with ID:', item.question_id);
     // Run the same pipeline (sequential, single item)
     const out = await scoreResponses({ ordered: [item], DEBUG, sequential: true });
 
