@@ -32,9 +32,66 @@ export default function Dashboard() {
     return d.toLocaleString()
   }
 
+  // useEffect(() => {
+  //   let isMounted = true;
+  //   let importInProgress = false;
+
+  //   async function load() {
+  //     try {
+  //       const token = isSignedIn ? await getToken({ template: "interview-backend" }) : null;
+  //       const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  //       // const headers: HeadersInit = {};
+  //       if (token) headers.Authorization = `Bearer ${token}`;
+        
+  //       // 1) Try fetching questions
+  //       console.log('about to fetch');
+  //       let res = await fetch(`${API_URL}/api/interviews/extract-qas`, { headers });
+  //       console.log('Questions successfully');
+      
+  //       // 2) If no content or server error, try import ONCE
+  //       if (!res.ok && [204, 404, 500].includes(res.status) && !importInProgress) {
+  //         importInProgress = true;
+  //         console.log('No questions found on server, attempting import...');
+
+  //         const importRes = await fetch(`${API_URL}/api/interviews/import-qas`, { method: 'POST', headers });
+  //         if (!importRes.ok) {
+  //           console.error('Import failed', importRes.status);
+  //           // Do not loop; show error
+  //           setError('Failed to import questions from source. Check server logs.');
+  //           return;
+  //         }
+
+  //         // Re-fetch after successful import
+  //         res = await fetch(`${API_URL}/api/interviews/extract-qas`, { headers });
+  //       }
+
+  //       if (res.ok) {
+  //         console.log('Questions fetched successfully');
+  //         const data = await res.json();
+  //         console.log('Raw fetched data:', data.length ? data[0] : 'No data');
+  //         console.log('Fetched questions:', data.slice(0, 3)); // log first 3 for brevity
+  //         if (!isMounted) return;
+  //         setQuestions(Array.isArray(data) ? data : []);
+  //       } else {
+  //         // handle other non-ok statuses gracefully
+  //         const text = await res.text().catch(() => null);
+  //         console.warn('extract-qas responded with', res.status, text);
+  //         setQuestions([]);
+  //       }
+  //     } catch (err) {
+  //       console.error('Failed to load questions:', err);
+  //       setError('Failed to load questions');
+  //     } finally {
+  //       if (isMounted) setLoading(false);
+  //     }
+  //   }
+
+  //   load();
+  //   return () => { isMounted = false; };
+  // }, [API_URL, getToken, isLoaded, isSignedIn]);
   useEffect(() => {
     let isMounted = true;
-    let importInProgress = false;
+    // let importInProgress = false;
 
     async function load() {
       try {
@@ -43,27 +100,15 @@ export default function Dashboard() {
         // const headers: HeadersInit = {};
         if (token) headers.Authorization = `Bearer ${token}`;
         
-        // 1) Try fetching questions
-        console.log('about to fetch');
-        let res = await fetch(`${API_URL}/api/interviews/extract-qas`, { headers });
-        console.log('Questions successfully');
-      
-        // 2) If no content or server error, try import ONCE
-        if (!res.ok && [204, 404, 500].includes(res.status) && !importInProgress) {
-          importInProgress = true;
-          console.log('No questions found on server, attempting import...');
-
-          const importRes = await fetch(`${API_URL}/api/interviews/import-qas`, { method: 'POST', headers });
-          if (!importRes.ok) {
-            console.error('Import failed', importRes.status);
-            // Do not loop; show error
-            setError('Failed to import questions from source. Check server logs.');
-            return;
-          }
-
-          // Re-fetch after successful import
-          res = await fetch(`${API_URL}/api/interviews/extract-qas`, { headers });
+        const importRes = await fetch(`${API_URL}/api/interviews/import-qas`, { method: 'POST', headers });
+        if (!importRes.ok) {
+          console.error('Import failed', importRes.status);
+          // Do not loop; show error
+          setError('Failed to import questions from source. Check server logs.');
+          return;
         }
+
+        const res = await fetch(`${API_URL}/api/interviews/extract-qas`, { headers });
 
         if (res.ok) {
           console.log('Questions fetched successfully');
@@ -167,7 +212,7 @@ export default function Dashboard() {
           </div>
         )}
       </div>
-      {/* <div className="grid gap-4">
+      <div className="grid gap-4">
         {questions.slice(0, 10).map((q) => (
           <article key={q.question_id} className="p-4 bg-[#0e0e0e] rounded border border-white/6">
             <p>{q.question_title}</p>
@@ -175,7 +220,7 @@ export default function Dashboard() {
           </article>
         ))}
         {questions.length > 10 && <p className="text-sm text-gray-500 mt-3">Showing first 10 items for preview</p>}
-    </div> */}
+    </div> 
     </main>
   )
 }

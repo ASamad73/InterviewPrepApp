@@ -82,10 +82,67 @@ router.get('/user/stats', async (req, res) => {
   }
 });
 
+// router.post('/import-qas', async (req, res) => {
+//   try {
+//     // Path to paraphrased_qas.json in BackEnd/
+//     const filePath = path.join(process.cwd(), 'paraphrased_qas.json');
+
+//     const raw = await fs.readFile(filePath, 'utf8');
+//     const items = JSON.parse(raw);
+
+//     if (!Array.isArray(items)) {
+//       return res.status(400).json({ message: 'Invalid JSON: expected an array' });
+//     }
+
+//     // Prepare upsert operations
+//     const ops = items.map((it) => {
+//       const filter =
+//         it.question_id !== undefined && it.question_id !== null
+//           ? { question_id: it.question_id }
+//           : { question_text: it.question_text };
+
+//       const update = {
+//         $set: {
+//           question_id: it.question_id ? String(it.question_id) : null,
+//           question_title: it.question_title || "",
+//           question_text: it.question_text,
+//           answer_text: it.answer_text,
+//           tags: it.tags || []
+//         },
+//         $setOnInsert: { createdAt: new Date() }
+//       };
+
+//       return {
+//         updateOne: {
+//           filter,
+//           update,
+//           upsert: true
+//         }
+//       };
+//     });
+
+//     if (ops.length === 0) {
+//       return res.status(204).json({ message: "No items to import" });
+//     }
+
+//     const result = await Question.bulkWrite(ops, { ordered: false });
+
+//     console.log(`Imported QAs: inserted ${result.upsertedCount}, modified ${result.modifiedCount || 0}`);
+//     return res.json({
+//       ok: true,
+//       inserted: result.upsertedCount,
+//       modified: result.modifiedCount || 0
+//     });
+
+//   } catch (err) {
+//     console.error('import-qas error', err);
+//     return res.status(500).json({ message: 'server error', error: String(err) });
+//   }
+// });
 router.post('/import-qas', async (req, res) => {
   try {
-    // Path to paraphrased_qas.json in BackEnd/
-    const filePath = path.join(process.cwd(), 'paraphrased_qas.json');
+    // change file name here (same directory)
+    const filePath = path.join(process.cwd(), 'combined_2.json');
 
     const raw = await fs.readFile(filePath, 'utf8');
     const items = JSON.parse(raw);
@@ -94,28 +151,26 @@ router.post('/import-qas', async (req, res) => {
       return res.status(400).json({ message: 'Invalid JSON: expected an array' });
     }
 
-    // Prepare upsert operations
     const ops = items.map((it) => {
       const filter =
         it.question_id !== undefined && it.question_id !== null
-          ? { question_id: it.question_id }
+          ? { question_id: String(it.question_id) }
           : { question_text: it.question_text };
-
-      const update = {
-        $set: {
-          question_id: it.question_id ? String(it.question_id) : null,
-          question_title: it.question_title || "",
-          question_text: it.question_text,
-          answer_text: it.answer_text,
-          tags: it.tags || []
-        },
-        $setOnInsert: { createdAt: new Date() }
-      };
 
       return {
         updateOne: {
           filter,
-          update,
+          update: {
+            $setOnInsert: {
+              question_id: it.question_id ? String(it.question_id) : null,
+              question_title: it.question_title || "",
+              question_text: it.question_text,
+              answer_text: it.answer_text,
+              tags: it.tags || [],
+              rank_value: typeof it.rank_value === 'number' ? it.rank_value : 0,
+              createdAt: new Date()
+            }
+          },
           upsert: true
         }
       };
@@ -127,11 +182,13 @@ router.post('/import-qas', async (req, res) => {
 
     const result = await Question.bulkWrite(ops, { ordered: false });
 
-    console.log(`Imported QAs: inserted ${result.upsertedCount}, modified ${result.modifiedCount || 0}`);
+    console.log(
+      `Imported QAs: inserted ${result.upsertedCount}, skipped existing`
+    );
+
     return res.json({
       ok: true,
-      inserted: result.upsertedCount,
-      modified: result.modifiedCount || 0
+      inserted: result.upsertedCount
     });
 
   } catch (err) {
@@ -139,6 +196,8 @@ router.post('/import-qas', async (req, res) => {
     return res.status(500).json({ message: 'server error', error: String(err) });
   }
 });
+
+
 
 router.get('/extract-qas', async (req, res) => {
   try {
