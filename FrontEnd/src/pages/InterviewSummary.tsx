@@ -295,7 +295,7 @@ export default function InterviewSummary(): JSX.Element {
             - Do not prompt for job info, role summary, or anything else outside the provided questions.
             - The interviewId above is a fixed identifier for this entire session.
             - You MUST include this exact interviewId in every call to the save_question_transcript tool.
-            - When you call save_question_transcript tool, the backend will return JSON that may include currentQuestion and nextAction. 
+            - When you call save_question_transcript tool, the backend will return JSON that will include currentQuestion. 
             Wait for the response: if currentQuestion appears, you must use it as the next ${currentQuestion} and ask it.
             `;
 

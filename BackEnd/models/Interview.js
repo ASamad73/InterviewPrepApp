@@ -19,6 +19,7 @@ const InterviewSchema = Schema({
   // questions: [{ type: Schema.Types.ObjectId, ref: 'Question' }],
   answers: { type: [AnswerSchema], default: [] },
   currentIndex: { type: Number, default: 0 },
+  questionsAskedCount: { type: Number, default: 0 },
   status: { type: String, enum: ['scheduled','in-progress','completed','archived'], default: 'draft' },
   selectedQuestions: { type: [String], default: [], require: true }, 
   date: { type: Date, default: () => new Date() },

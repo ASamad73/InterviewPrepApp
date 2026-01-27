@@ -385,16 +385,16 @@ router.post("/save-question", async (req, res) => {
 
     console.log("NEXT QUESTION: ", nextPick)
 
-    if(!nextPick) {
+    if(!nextPick || nextPick.action === 'end') {
       console.log("No next pick returned")
       return res.status(200).json({
         currentQuestion: null,
-        nextAction: 'end',
+        // nextAction: 'end',
       });
     }
 
     const currentQuestion = {question_id: String(nextPick.question.question_id || ''), question_text: nextPick.question.question_text || ''};
-    const nextAction = nextPick.action || '';
+    // const nextAction = nextPick.action || '';
 
     // try {
     //   if (nextPick) {
@@ -445,7 +445,7 @@ router.post("/save-question", async (req, res) => {
       // combined_text: perQ.combined_text,
       // scoring: scoringResult,
       currentQuestion, 
-      nextAction
+      // nextAction
     });
 
   } catch (err) {
