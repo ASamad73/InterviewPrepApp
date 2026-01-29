@@ -12,10 +12,6 @@ config({ path: "./back.env" });
 
 const router = express.Router();
 
-// in agentRoutes.js (top)
-const pendingMcpClients = new Set();   // SSE connections waiting to be claimed
-const mcpClients = {};                 // conversationId -> { res, keepaliveInterval, conversationId }
-
 // function verifyWebhook(req, res, next) {
 //   const secret = process.env.WEBHOOK_SECRET;
 //   if (!secret) {

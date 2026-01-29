@@ -99,14 +99,6 @@ export default function Dashboard() {
         const headers: HeadersInit = { 'Content-Type': 'application/json' };
         // const headers: HeadersInit = {};
         if (token) headers.Authorization = `Bearer ${token}`;
-        
-        const importRes = await fetch(`${API_URL}/api/interviews/import-qas`, { method: 'POST', headers });
-        if (!importRes.ok) {
-          console.error('Import failed', importRes.status);
-          // Do not loop; show error
-          setError('Failed to import questions from source. Check server logs.');
-          return;
-        }
 
         const res = await fetch(`${API_URL}/api/interviews/extract-qas`, { headers });
 

@@ -514,15 +514,413 @@
 // scoring.js (manual-scoring fallback implementation)
 // Replace your existing scoring.js with this file (or apply the minimal changes inside).
 
+//-----------------------------------------------------------------------------------------------------
+
+// import { config } from "dotenv";
+// import path from "path";
+// config({ path: path.join(process.cwd(), "back.env") });
+
+// // NOTE: We intentionally do NOT require or use GEMINI_API_KEY here.
+// // This file provides a deterministic manual scorer to use while LLM problems persist.
+
+// /* ----------------------
+//    Heuristic lexical scorer (primary scoring engine)
+//    ---------------------- */
+
+// function normalizeText(s = "") {
+//   return (s || "")
+//     .toString()
+//     .toLowerCase()
+//     .replace(/[`"'“”‘’]/g, "")
+//     .replace(/[^a-z0-9\s]+/g, " ")
+//     .split(/\s+/)
+//     .filter(Boolean);
+// }
+
+// function lexicalScore(expected, response) {
+//   // returns correctness, depth, communication, metrics and misses (array)
+//   if (!response || !response.trim()) {
+//     return { correctness: 0, depth: 0, communication: 1, metrics: 0, misses: [] };
+//   }
+
+//   const eTokens = normalizeText(expected || "");
+//   const rTokens = normalizeText(response || "");
+
+//   const eSet = new Set(eTokens);
+//   const matches = rTokens.filter((t) => eSet.has(t));
+//   const overlap = eTokens.length ? matches.length / eTokens.length : 0;
+
+//   // technicalMatches = tokens likely to be domain terms (length>3 and not stopwords)
+//   const technicalMatches = matches.filter((tok) => tok.length > 3);
+
+//   // CORRECTNESS: overlap with boosting from technical matches and phrase matches
+//   let correctness = Math.min(5, Math.round(overlap * 5));
+//   if (technicalMatches.length >= 2 && correctness < 3) correctness = 3;
+
+//   // If candidate mentions exact key phrases from expected answer, boost further
+//   const phraseBoosters = ["react.reactnode", "reactnode", "react node", "react.reactnode"];
+//   const respLower = response.toLowerCase();
+//   for (const p of phraseBoosters) {
+//     if (respLower.includes(p) && correctness < 4) correctness = Math.max(correctness, 4);
+//   }
+
+//   // penalize tiny answers (short explicit "not sure" handled elsewhere)
+//   if (response.trim().length < 10) correctness = Math.min(correctness, 1);
+
+//   // DEPTH: measure presence of technical tokens relative to expected tokens
+//   let depth = Math.min(5, Math.round((technicalMatches.length / Math.max(1, eTokens.length)) * 5));
+//   // If answer is long and contains many tokens, increase depth modestly
+//   if (rTokens.length > Math.max(20, eTokens.length)) {
+//     depth = Math.min(5, depth + 1);
+//   }
+//   // Avoid high depth for low-length responses
+//   if (rTokens.length < Math.max(8, eTokens.length / 2) && depth > 3) depth = 3;
+
+//   // COMMUNICATION: clarity/length indicator (balanced)
+//   const communication = Math.min(5, Math.round(Math.min(1, rTokens.length / 20) * 5));
+
+//   // METRICS: evidence of numbers/estimations present
+//   const metrics = /\b\d+(\.\d+)?\b/.test(response) ? 2 : 0;
+
+//   // missed points: top tokens from expected that are not in response
+//   const missed = (eTokens.slice(0, 40) || []).filter((t) => !rTokens.includes(t)).slice(0, 10);
+
+//   return {
+//     correctness,
+//     depth,
+//     communication,
+//     metrics,
+//     misses: Array.from(new Set(missed)),
+//   };
+// }
+
+// /* ----------------------
+//    Helpers: mapping, weights, rounding
+//    ---------------------- */
+
+// function clamp(v) {
+//   v = Number(v);
+//   if (!Number.isFinite(v)) return 0;
+//   return Math.max(0, Math.min(5, Math.round(v * 4) / 4));
+// }
+
+// function round(v) {
+//   return Math.round(v * 100) / 100;
+// }
+
+// function weightedOverall(scores) {
+//   const W = {
+//     correctness: 0.75, // correctness dominates
+//     depth: 0.15,
+//     communication: 0.10,
+//     metrics: 0.0,
+//   };
+//   let sum = 0;
+//   for (const k in W) sum += W[k] * (scores[k] || 0);
+//   // guardrail to avoid extremely low overall when correctness is moderate
+//   if ((scores.correctness || 0) >= 3) sum = Math.max(sum, 2.5);
+//   return round(sum);
+// }
+
+// /* ----------------------
+//    Utility: detect explicit skips / don't know
+//    ---------------------- */
+
+// function isExplicitSkipOrDontKnow(s) {
+//   if (!s || typeof s !== "string") return false;
+//   const t = s.trim().toLowerCase();
+//   return [
+//     /\b(skip|pass)\b/,
+//     /\bnot sure\b/,
+//     /\bdon'?t know\b/,
+//     /\bno idea\b/,
+//     /\bmove on\b/,
+//   ].some((re) => re.test(t));
+// }
+
+// /* ----------------------
+//    scoreResponses — deterministic, no LLM
+//    Input: ordered: array of items (question_id, answer_text, response, ...)
+//    Returns array with .score similar to old shape
+//    ---------------------- */
+
+// export async function scoreResponses({
+//   ordered = [],
+//   DEBUG = false,
+//   sequential = true,
+//   maxConcurrent = 1,
+// } = {}) {
+//   if (!Array.isArray(ordered)) throw new Error("ordered must be an array");
+
+//   const results = [];
+
+//   async function scoreOne(item) {
+//     const qid = String(item.question_id ?? "");
+//     const expectedAnswer = item.answer_text || item.expected_answer || "";
+//     const userResponse = item.response || item.user_response || "";
+
+//     if (isExplicitSkipOrDontKnow(userResponse)) {
+//       return {
+//         ok: true,
+//         fallback: true,
+//         question_id: qid,
+//         scores: { correctness: 0, depth: 0, communication: 1, metrics: 0 },
+//         overall_score: 0,
+//         missed_points: [],
+//         positive_points: [],
+//         rationale: "Candidate explicitly skipped or indicated no knowledge.",
+//         raw_llm_text: null,
+//       };
+//     }
+
+//     // Use lexical heuristics
+//     const lex = lexicalScore(expectedAnswer, userResponse);
+
+//     const scores = {
+//       correctness: clamp(lex.correctness),
+//       depth: clamp(lex.depth),
+//       communication: clamp(lex.communication),
+//       metrics: clamp(lex.metrics),
+//     };
+
+//     const missed_points = lex.misses || lex.misses || [];
+//     // build positive_points: first few matched technical tokens or short phrases
+//     const eTokens = normalizeText(expectedAnswer).slice(0, 40);
+//     const rTokens = normalizeText(userResponse);
+//     const matched = rTokens.filter((t) => eTokens.includes(t)).slice(0, 6);
+//     const positive_points = matched.length ? matched.map((t) => `mentioned "${t}"`) : [];
+
+//     const weighted5 = weightedOverall(scores);
+
+//     const rationale = `Heuristic scoring: correctness=${scores.correctness}, depth=${scores.depth}, communication=${scores.communication}.`;
+
+//     return {
+//       ok: true,
+//       fallback: true,
+//       question_id: qid,
+//       scores,
+//       overall_score: weighted5,
+//       missed_points,
+//       positive_points,
+//       rationale,
+//       raw_llm_text: null,
+//     };
+//   }
+
+//   if (sequential || maxConcurrent <= 1) {
+//     for (const it of ordered) {
+//       const out = await scoreOne(it);
+//       results.push({ ...it, score: out });
+//     }
+//   } else {
+//     // basic concurrency for completeness
+//     const proms = ordered.map((it) => scoreOne(it).then((out) => ({ ...it, score: out })));
+//     const settled = await Promise.all(proms);
+//     results.push(...settled);
+//   }
+
+//   return { ok: true, items: results, count: results.length };
+// }
+
+// /* ----------------------
+//    scoreSingleQuestion — wrap single call to scoreResponses
+//    ---------------------- */
+
+// export async function scoreSingleQuestion({
+//   question_id = '',
+//   question_title = '',
+//   question_text = '',
+//   expected_answer = '',
+//   user_response = '',
+//   DEBUG = false,
+// } = {}) {
+//   try {
+//     const lowerResp = (user_response || '').toLowerCase();
+//     if (['not sure','don\'t know','pass','skip','move on','i don\'t know'].some(p => lowerResp.includes(p))) {
+//       return {
+//         ok: true,
+//         score: 0.0,
+//         category: 'very_low',
+//         details: {
+//           overall_score_5: 0,
+//           componentScores: { correctness: 0, depth: 0, communication: 0, metrics: 0 },
+//           rationale: 'Explicit low answer (not sure/skip)'
+//         }
+//       };
+//     }
+
+//     const item = {
+//       question_id: String(question_id ?? ''),
+//       question_title: question_title ?? '',
+//       question_text: question_text ?? '',
+//       answer_text: expected_answer ?? '',
+//       response: user_response ?? '',
+//     };
+
+//     const out = await scoreResponses({ ordered: [item], DEBUG, sequential: true });
+//     const scoredItem = (out && Array.isArray(out.items) && out.items[0]) || null;
+//     const scoreObj = scoredItem?.score || null;
+
+//     const overall5 = Number.isFinite(scoreObj?.overall_score) ? Number(scoreObj.overall_score) : 0;
+//     const componentScores = scoreObj?.scores ?? { correctness: 0, depth: 0, communication: 0, metrics: 0 };
+
+//     const score01 = Math.max(0, Math.min(1, overall5 / 5));
+//     let category = 'very_low';
+//     if (score01 < 0.3) category = 'very_low';
+//     else if (score01 < 0.6) category = 'borderline';
+//     else if (score01 < 0.8) category = 'acceptable';
+//     else category = 'strong';
+
+//     return {
+//       ok: true,
+//       score: Number(Math.round(score01 * 100) / 100),
+//       category,
+//       details: {
+//         overall_score_5: overall5,
+//         componentScores,
+//         missed_points: scoreObj?.missed_points || [],
+//         positive_points: scoreObj?.positive_points || [],
+//         rationale: String(scoreObj?.rationale || ''),
+//         raw_llm_text: null,
+//         fallback: true,
+//       }
+//     };
+//   } catch (err) {
+//     console.error('scoreSingleQuestion error:', err && (err.stack || String(err)));
+//     return {
+//       ok: false,
+//       score: 0,
+//       score5: 0,
+//       category: 'very_low',
+//       details: { error: String(err) },
+//     };
+//   }
+// }
+
+// export default {
+//   scoreResponses,
+//   scoreSingleQuestion,
+// };
+
 import { config } from "dotenv";
 import path from "path";
 config({ path: path.join(process.cwd(), "back.env") });
 
-// NOTE: We intentionally do NOT require or use GEMINI_API_KEY here.
-// This file provides a deterministic manual scorer to use while LLM problems persist.
+// NOTE: OpenRouter integration added below. If OPENROUTER_API_KEY is not set or USE_OPENROUTER is false,
+// the code behaves exactly as before (lexical fallback only).
+
+/* ----------------------
+   OpenRouter LLM caller (minimal, robust)
+   ---------------------- */
+
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || ""; // must match a model you have access to in OpenRouter
+const USE_OPENROUTER_GLOBAL = String(process.env.USE_OPENROUTER || "false").toLowerCase() === "true";
+const OPENROUTER_TIMEOUT_MS = 12000;
+
+async function callOpenRouter(prompt, retry = 0, DEBUG = false) {
+  if (!OPENROUTER_API_KEY || !OPENROUTER_MODEL) {
+    throw new Error("OpenRouter key or model not configured");
+  }
+
+  const url = "https://openrouter.ai/api/v1/chat/completions";
+
+  const body = {
+    model: OPENROUTER_MODEL,
+    messages: [
+      { role: "user", content: [{ type: "text", text: prompt }] }
+    ],
+    // you can add temperature/top_p etc if you want
+    temperature: 0.0,
+    max_tokens: 8000,
+  };
+
+  try {
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timeout = OPENROUTER_TIMEOUT_MS;
+    let timeoutId;
+    if (controller) timeoutId = setTimeout(() => controller.abort(), timeout);
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: controller ? controller.signal : undefined,
+    });
+
+    if (controller) clearTimeout(timeoutId);
+
+    const text = await res.text();
+
+    if (!res.ok) {
+      // Try to parse error JSON for clarity
+      let parsed = null;
+      try { parsed = JSON.parse(text); } catch (e) { /* ignore */ }
+      const msg = parsed?.error ?? parsed ?? text;
+      const err = new Error(`OpenRouter API error: HTTP ${res.status} ${res.statusText} - ${JSON.stringify(msg).slice(0, 300)}`);
+      err.status = res.status;
+      err.raw = parsed ?? text;
+      // Expose retry info if present
+      const retryAfter = res.headers.get && res.headers.get("retry-after");
+      if (retryAfter) err.retryAfter = Number(retryAfter);
+      throw err;
+    }
+
+    // Attempt parse JSON response
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
+
+    // Try to extract textual content robustly
+    let candidateText = null;
+    if (parsed) {
+      // try OpenAI-like structure
+      candidateText =
+        parsed?.choices?.[0]?.message?.content?.[0]?.text ??
+        parsed?.choices?.[0]?.message?.content ??
+        parsed?.choices?.[0]?.message?.content?.[0]?.content ??
+        parsed?.choices?.[0]?.text ??
+        null;
+      // fallback: sometimes content is stringified in choices[0].message.content[0].text
+      if (!candidateText && Array.isArray(parsed?.choices)) {
+        const c = parsed.choices[0];
+        if (typeof c === "object" && c !== null) {
+          // search nested
+          const str = JSON.stringify(c).slice(0, 10000);
+          candidateText = str;
+        }
+      }
+    } else {
+      candidateText = text;
+    }
+
+    if (!candidateText && DEBUG) {
+      console.warn("OpenRouter: no candidate text extracted. Raw response:", text.slice(0, 1000));
+    }
+
+    return candidateText ? String(candidateText) : text;
+  } catch (err) {
+    // Retry logic for transient errors (429, 5xx, or timeouts)
+    const status = err?.status ?? null;
+    if (
+      retry < 3 &&
+      (status === 429 || (status >= 500 && status < 600) || err.name === "AbortError")
+    ) {
+      const retryAfter = err?.retryAfter ? err.retryAfter * 1000 : null;
+      const backoffMs = (retryAfter ?? (1000 * Math.pow(2, retry))) + Math.floor(Math.random() * 300);
+      if (DEBUG) console.warn(`[OpenRouter] transient error (status=${status}). Retrying after ${backoffMs}ms.`);
+      await new Promise((r) => setTimeout(r, backoffMs));
+      return callOpenRouter(prompt, retry + 1, DEBUG);
+    }
+    throw err;
+  }
+}
 
 /* ----------------------
    Heuristic lexical scorer (primary scoring engine)
+   (unchanged)
    ---------------------- */
 
 function normalizeText(s = "") {
@@ -536,7 +934,6 @@ function normalizeText(s = "") {
 }
 
 function lexicalScore(expected, response) {
-  // returns correctness, depth, communication, metrics and misses (array)
   if (!response || !response.trim()) {
     return { correctness: 0, depth: 0, communication: 1, metrics: 0, misses: [] };
   }
@@ -548,39 +945,27 @@ function lexicalScore(expected, response) {
   const matches = rTokens.filter((t) => eSet.has(t));
   const overlap = eTokens.length ? matches.length / eTokens.length : 0;
 
-  // technicalMatches = tokens likely to be domain terms (length>3 and not stopwords)
   const technicalMatches = matches.filter((tok) => tok.length > 3);
 
-  // CORRECTNESS: overlap with boosting from technical matches and phrase matches
   let correctness = Math.min(5, Math.round(overlap * 5));
   if (technicalMatches.length >= 2 && correctness < 3) correctness = 3;
 
-  // If candidate mentions exact key phrases from expected answer, boost further
   const phraseBoosters = ["react.reactnode", "reactnode", "react node", "react.reactnode"];
   const respLower = response.toLowerCase();
   for (const p of phraseBoosters) {
     if (respLower.includes(p) && correctness < 4) correctness = Math.max(correctness, 4);
   }
 
-  // penalize tiny answers (short explicit "not sure" handled elsewhere)
   if (response.trim().length < 10) correctness = Math.min(correctness, 1);
 
-  // DEPTH: measure presence of technical tokens relative to expected tokens
   let depth = Math.min(5, Math.round((technicalMatches.length / Math.max(1, eTokens.length)) * 5));
-  // If answer is long and contains many tokens, increase depth modestly
   if (rTokens.length > Math.max(20, eTokens.length)) {
     depth = Math.min(5, depth + 1);
   }
-  // Avoid high depth for low-length responses
   if (rTokens.length < Math.max(8, eTokens.length / 2) && depth > 3) depth = 3;
 
-  // COMMUNICATION: clarity/length indicator (balanced)
   const communication = Math.min(5, Math.round(Math.min(1, rTokens.length / 20) * 5));
-
-  // METRICS: evidence of numbers/estimations present
   const metrics = /\b\d+(\.\d+)?\b/.test(response) ? 2 : 0;
-
-  // missed points: top tokens from expected that are not in response
   const missed = (eTokens.slice(0, 40) || []).filter((t) => !rTokens.includes(t)).slice(0, 10);
 
   return {
@@ -593,7 +978,7 @@ function lexicalScore(expected, response) {
 }
 
 /* ----------------------
-   Helpers: mapping, weights, rounding
+   Helpers: clamp, round, weightedOverall, skip detection (unchanged)
    ---------------------- */
 
 function clamp(v) {
@@ -608,21 +993,16 @@ function round(v) {
 
 function weightedOverall(scores) {
   const W = {
-    correctness: 0.75, // correctness dominates
+    correctness: 0.75,
     depth: 0.15,
     communication: 0.10,
     metrics: 0.0,
   };
   let sum = 0;
   for (const k in W) sum += W[k] * (scores[k] || 0);
-  // guardrail to avoid extremely low overall when correctness is moderate
   if ((scores.correctness || 0) >= 3) sum = Math.max(sum, 2.5);
   return round(sum);
 }
-
-/* ----------------------
-   Utility: detect explicit skips / don't know
-   ---------------------- */
 
 function isExplicitSkipOrDontKnow(s) {
   if (!s || typeof s !== "string") return false;
@@ -637,9 +1017,52 @@ function isExplicitSkipOrDontKnow(s) {
 }
 
 /* ----------------------
-   scoreResponses — deterministic, no LLM
-   Input: ordered: array of items (question_id, answer_text, response, ...)
-   Returns array with .score similar to old shape
+   LLM prompt builder (same JSON spec you had for Gemini)
+   ---------------------- */
+
+function buildLLMScoringPrompt({ questionTitle, questionText, expectedAnswer, userResponse }) {
+  const q = (questionTitle ? `${questionTitle}\n` : "") + (questionText || "");
+  return `
+You are an expert technical interviewer and a grader. Given the INTERVIEW QUESTION, the IDEAL/EXPECTED ANSWER, and the CANDIDATE RESPONSE, produce a strict JSON object (and nothing else) that evaluates the candidate response.
+
+Respond EXACTLY with a single JSON object with these keys:
+
+{
+  "question_id": "<string>",
+  "scores": {
+    "correctness": <number 0-5>,
+    "depth": <number 0-5>,
+    "communication": <number 0-5>,
+    "metrics": <number 0-5>
+  },
+  "overall_score": <number 0-5>,
+  "missed_points": ["short bullet strings..."],
+  "positive_points": ["short bullet strings..."],
+  "rationale": "brief explanation (1-3 sentences) of why these scores were given"
+}
+
+RULES:
+- Output ONLY the JSON object, nothing else.
+- Use numeric scores only 0..5.
+- Keep rationale short (1-3 sentences).
+
+INPUT FIELDS:
+INTERVIEW QUESTION:
+${q}
+
+IDEAL/EXPECTED ANSWER:
+${expectedAnswer || ""}
+
+CANDIDATE RESPONSE:
+${userResponse || ""}
+
+Return JSON now.
+  `;
+}
+
+/* ----------------------
+   scoreResponses — deterministic, no LLM by default
+   (small change: accepts useLLM in options and will attempt LLM if enabled & configured)
    ---------------------- */
 
 export async function scoreResponses({
@@ -647,9 +1070,12 @@ export async function scoreResponses({
   DEBUG = false,
   sequential = true,
   maxConcurrent = 1,
+  useLLM = false,            // NEW optional param; default false to preserve behavior
 } = {}) {
   if (!Array.isArray(ordered)) throw new Error("ordered must be an array");
 
+  // Only enable LLM if global env flag or passed option AND OpenRouter configured
+  const enableLLM = useLLM || USE_OPENROUTER_GLOBAL;
   const results = [];
 
   async function scoreOne(item) {
@@ -671,7 +1097,65 @@ export async function scoreResponses({
       };
     }
 
-    // Use lexical heuristics
+    // If LLM enabled and configured, attempt LLM first. If it fails, fallback to lexical.
+    if (enableLLM && OPENROUTER_API_KEY && OPENROUTER_MODEL) {
+      try {
+        const prompt = buildLLMScoringPrompt({
+          questionTitle: item.question_title || "",
+          questionText: item.question_text || item.question_text_raw || "",
+          expectedAnswer,
+          userResponse,
+        });
+        if (DEBUG) console.log("[LLM] Sending prompt:", prompt.slice(0, 400));
+        const llmRaw = await callOpenRouter(prompt, 0, DEBUG);
+        if (DEBUG) console.log("[LLM] raw response snippet:", String(llmRaw).slice(0, 400));
+
+        // Try to extract a JSON payload from the LLM's text
+        const extracted = extractJsonFromText(llmRaw);
+        let parsed = null;
+        if (extracted) {
+          try { parsed = JSON.parse(extracted); } catch (e) { parsed = null; }
+        } else {
+          // try parse direct if it's already JSON
+          try { parsed = JSON.parse(llmRaw); } catch (e) { parsed = null; }
+        }
+
+        if (parsed && parsed.scores) {
+          // Map LLM scores to your expected shape with clamping/rounding
+          const rawScores = parsed.scores || parsed.score || {};
+          const scores = {
+            correctness: clamp(rawScores.correctness ?? rawScores.correct ?? 0),
+            depth: clamp(rawScores.depth ?? 0),
+            communication: clamp(rawScores.communication ?? 0),
+            metrics: clamp(rawScores.metrics ?? 0),
+          };
+          const overall = Number.isFinite(parsed.overall_score) ? parsed.overall_score : weightedOverall(scores);
+          const missed = Array.isArray(parsed.missed_points) ? parsed.missed_points : (parsed.missed_points || []);
+          const positive = Array.isArray(parsed.positive_points) ? parsed.positive_points : (parsed.positive_points || []);
+          const rationale = String(parsed.rationale || "");
+
+          return {
+            ok: true,
+            fallback: false,
+            question_id: qid,
+            scores,
+            overall_score: overall,
+            missed_points: missed,
+            positive_points: positive,
+            rationale,
+            raw_llm_text: String(llmRaw),
+          };
+        } else {
+          if (DEBUG) console.warn("[LLM] LLM response parse failed, falling back to lexical. Raw:", String(llmRaw).slice(0, 400));
+          // fall through to lexical logic below
+        }
+      } catch (err) {
+        if (DEBUG) console.warn("[LLM] callOpenRouter failed, falling back to lexical. Error:", err && (err.stack || String(err)));
+        // fall through to lexical fallback
+      }
+    }
+
+    // Use lexical heuristics (existing behavior)
     const lex = lexicalScore(expectedAnswer, userResponse);
 
     const scores = {
@@ -682,14 +1166,12 @@ export async function scoreResponses({
     };
 
     const missed_points = lex.misses || lex.misses || [];
-    // build positive_points: first few matched technical tokens or short phrases
     const eTokens = normalizeText(expectedAnswer).slice(0, 40);
     const rTokens = normalizeText(userResponse);
     const matched = rTokens.filter((t) => eTokens.includes(t)).slice(0, 6);
     const positive_points = matched.length ? matched.map((t) => `mentioned "${t}"`) : [];
 
     const weighted5 = weightedOverall(scores);
-
     const rationale = `Heuristic scoring: correctness=${scores.correctness}, depth=${scores.depth}, communication=${scores.communication}.`;
 
     return {
@@ -711,7 +1193,6 @@ export async function scoreResponses({
       results.push({ ...it, score: out });
     }
   } else {
-    // basic concurrency for completeness
     const proms = ordered.map((it) => scoreOne(it).then((out) => ({ ...it, score: out })));
     const settled = await Promise.all(proms);
     results.push(...settled);
@@ -721,7 +1202,23 @@ export async function scoreResponses({
 }
 
 /* ----------------------
-   scoreSingleQuestion — wrap single call to scoreResponses
+   extractJsonFromText (same helper you had earlier or added)
+   ---------------------- */
+function extractJsonFromText(text) {
+  if (!text || typeof text !== "string") return null;
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+  const jsonText = text.slice(start, end + 1);
+  try {
+    return JSON.parse(jsonText);
+  } catch (e) {
+    return null;
+  }
+}
+
+/* ----------------------
+   scoreSingleQuestion — unchanged (still uses scoreResponses)
    ---------------------- */
 
 export async function scoreSingleQuestion({
@@ -755,7 +1252,8 @@ export async function scoreSingleQuestion({
       response: user_response ?? '',
     };
 
-    const out = await scoreResponses({ ordered: [item], DEBUG, sequential: true });
+    // NOTE: pass useLLM param if you want to enable LLM for this call only
+    const out = await scoreResponses({ ordered: [item], DEBUG, sequential: true, useLLM: false });
     const scoredItem = (out && Array.isArray(out.items) && out.items[0]) || null;
     const scoreObj = scoredItem?.score || null;
 

@@ -141,7 +141,6 @@ router.get('/user/stats', async (req, res) => {
 // });
 router.post('/import-qas', async (req, res) => {
   try {
-    // change file name here (same directory)
     const filePath = path.join(process.cwd(), 'combined_2.json');
 
     const raw = await fs.readFile(filePath, 'utf8');
