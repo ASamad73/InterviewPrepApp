@@ -1016,48 +1016,157 @@ function isExplicitSkipOrDontKnow(s) {
   ].some((re) => re.test(t));
 }
 
+const STOPWORDS = new Set([
+  "the","a","an","of","in","on","at","for","to","and","or","by","with","is","are","be","it","that","this","these","those","as","from","which"
+]);
+
+function cleanConcepts(pointsArray) {
+  // Input: array of { point: "...", confidence: 0.x } or strings
+  if (!Array.isArray(pointsArray)) return [];
+  const seen = new Set();
+  const out = [];
+  for (let p of pointsArray) {
+    if (!p) continue;
+    let text = typeof p === "string" ? p : (p.point || "");
+    text = text.trim();
+    if (!text) continue;
+    // remove leading/trailing stopwords and collapse whitespace
+    const toks = text.split(/\s+/).filter(Boolean);
+    // remove single-token stopwords & tiny tokens
+    const filtered = toks.filter(t => !(STOPWORDS.has(t.toLowerCase()) || t.length <= 2));
+    if (filtered.length === 0) continue;
+    const normalized = filtered.join(" ").toLowerCase();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    const confidence = (typeof p === "object" && Number.isFinite(p.confidence)) ? Math.max(0, Math.min(1, p.confidence)) : 0.6;
+    out.push({ point: capitalizeFirst(filtered.join(" ")), confidence });
+    if (out.length >= 6) break; // enforce 6 item limit
+  }
+  return out;
+}
+
+function capitalizeFirst(s) { 
+  return s.charAt(0).toUpperCase() + s.slice(1); 
+}
+
 /* ----------------------
    LLM prompt builder (same JSON spec you had for Gemini)
    ---------------------- */
 
+// function buildLLMScoringPrompt({ questionTitle, questionText, expectedAnswer, userResponse }) {
+//   const q = (questionTitle ? `${questionTitle}\n` : "") + (questionText || "");
+//   return `
+// You are an expert technical interviewer and a grader. Given the INTERVIEW QUESTION, the IDEAL/EXPECTED ANSWER, and the CANDIDATE RESPONSE, produce a strict JSON object (and nothing else) that evaluates the candidate response.
+
+// Respond EXACTLY with a single JSON object with these keys:
+
+// {
+//   "question_id": "<string>",
+//   "scores": {
+//     "correctness": <number 0-5>,
+//     "depth": <number 0-5>,
+//     "communication": <number 0-5>,
+//     "metrics": <number 0-5>
+//   },
+//   "overall_score": <number 0-5>,
+//   "missed_points": ["short bullet strings..."],
+//   "positive_points": ["short bullet strings..."],
+//   "rationale": "brief explanation (1-3 sentences) of why these scores were given"
+// }
+
+// RULES:
+// - Output ONLY the JSON object, nothing else.
+// - Use numeric scores only 0..5.
+// - Keep rationale short (1-3 sentences).
+
+// INPUT FIELDS:
+// INTERVIEW QUESTION:
+// ${q}
+
+// IDEAL/EXPECTED ANSWER:
+// ${expectedAnswer || ""}
+
+// CANDIDATE RESPONSE:
+// ${userResponse || ""}
+
+// Return JSON now.
+//   `;
+// }
 function buildLLMScoringPrompt({ questionTitle, questionText, expectedAnswer, userResponse }) {
   const q = (questionTitle ? `${questionTitle}\n` : "") + (questionText || "");
   return `
-You are an expert technical interviewer and a grader. Given the INTERVIEW QUESTION, the IDEAL/EXPECTED ANSWER, and the CANDIDATE RESPONSE, produce a strict JSON object (and nothing else) that evaluates the candidate response.
+    You are an expert technical interviewer and a careful grader. Your job: compare the IDEAL/EXPECTED ANSWER (reference) to the CANDIDATE RESPONSE and produce ONE valid JSON object and NOTHING ELSE.  
+    Important behavior rules (must follow exactly):
+    1. **Concept-level matching**: When extracting missed_points or positive_points, always return short *concept phrases* (3-6 words max) that represent meaningful ideas or steps — NOT exact function words or single prepositions. Do not include "of", "the", "a", "and", or other stopwords as separate missed points.
+    2. **Paraphrase-tolerant**: Treat synonyms and paraphrases as satisfying a concept. If the candidate used a paraphrase that captures the same idea, do **not** mark it as missed.
+    3. **Be helpful**: missed_points should be specific and actionable (e.g., "mention time complexity O(n)" or "explain queue usage for level-order traversal"), not raw tokens.
+    4. **Confidence**: For each missed_point and positive_point provide 'confidence' (0.0-1.0).
+    5. **Limit**: Aim for 2–6 missed_points and 1–6 positive_points where applicable.
+    6. **Output only valid JSON** (no commentary). If a field is empty, return an empty array or sensible default.
 
-Respond EXACTLY with a single JSON object with these keys:
+    OUTPUT SCHEMA (exact keys, types):
+    {
+      "question_id": "<string>",
+      "scores": { "correctness": <0-5>, "depth": <0-5>, "communication": <0-5>, "metrics": <0-5> },
+      "overall_score": <0-5>,
+      "missed_points": [ { "point": "<short phrase>", "confidence": <0.0-1.0> } ],
+      "positive_points": [ { "point": "<short phrase>", "confidence": <0.0-1.0> } ],
+      "rationale": "<1-3 sentence explanation>"
+    }
 
-{
-  "question_id": "<string>",
-  "scores": {
-    "correctness": <number 0-5>,
-    "depth": <number 0-5>,
-    "communication": <number 0-5>,
-    "metrics": <number 0-5>
-  },
-  "overall_score": <number 0-5>,
-  "missed_points": ["short bullet strings..."],
-  "positive_points": ["short bullet strings..."],
-  "rationale": "brief explanation (1-3 sentences) of why these scores were given"
-}
+    RULES FOR SCORING:
+    - Use your own knowledge to evaluate correctness and depth; do not rely only on exact token overlap.
+    - overall_score should be consistent with the component scores (approx average, allow 0.25/0.5 resolution).
+    - Keep rationale concise and tied to the components.
 
-RULES:
-- Output ONLY the JSON object, nothing else.
-- Use numeric scores only 0..5.
-- Keep rationale short (1-3 sentences).
+    FEW-SHOT EXAMPLES (follow these formats exactly):
 
-INPUT FIELDS:
-INTERVIEW QUESTION:
-${q}
+    Example 1:
+    IDEAL: "Use BFS (queue-based) for level order traversal. Mention time complexity O(n) and that BFS uses a queue; explain marking visited for graphs to avoid cycles."
+    CANDIDATE: "Use breadth-first search with a queue to visit nodes level by level. It's O(n)."
+    EXPECTED JSON:
+    {
+      "question_id":"ex1",
+      "scores": { "correctness": 4.5, "depth": 3.0, "communication": 4.0, "metrics": 2.0 },
+      "overall_score": 3.5,
+      "missed_points": [
+        { "point":"mention visited-set or marking visited to avoid cycles", "confidence": 0.9 },
+        { "point":"explicitly state queue semantics for graph cycles", "confidence": 0.6 }
+      ],
+      "positive_points": [
+        { "point":"correctly identified BFS and queue usage", "confidence": 0.95 },
+        { "point":"stated time complexity O(n)", "confidence": 0.9 }
+      ],
+      "rationale":"Candidate correctly described BFS and complexity but omitted cycle-handling detail (visited set) and did not fully explain queue semantics for graphs."
+    }
 
-IDEAL/EXPECTED ANSWER:
-${expectedAnswer || ""}
+    Example 2:
+    IDEAL: "Explain difference between pass-by-value and pass-by-reference. Example in JS: primitives copied, objects by reference."
+    CANDIDATE: "In JS primitives are copied, objects are references — so changing object props affects callers."
+    EXPECTED JSON:
+    {
+      "question_id":"ex2",
+      "scores": { "correctness": 5.0, "depth": 4.0, "communication": 4.5, "metrics": 0.0 },
+      "overall_score": 4.5,
+      "missed_points": [],
+      "positive_points": [
+        { "point":"gave correct JS example distinguishing primitives vs objects", "confidence": 0.95 }
+      ],
+      "rationale":"Clear, accurate explanation with an example; nothing significant missing."
+    }
 
-CANDIDATE RESPONSE:
-${userResponse || ""}
+    NOW YOUR INPUT:
+    INTERVIEW QUESTION:
+    ${q}
 
-Return JSON now.
-  `;
+    IDEAL/EXPECTED ANSWER:
+    ${expectedAnswer || ""}
+
+    CANDIDATE RESPONSE:
+    ${userResponse || ""}
+
+    Return the JSON now.
+  `.trim();
 }
 
 /* ----------------------
@@ -1134,14 +1243,17 @@ export async function scoreResponses({
           const positive = Array.isArray(parsed.positive_points) ? parsed.positive_points : (parsed.positive_points || []);
           const rationale = String(parsed.rationale || "");
 
+          const missed_points = cleanConcepts(missed);
+          const positive_points = cleanConcepts(positive);
+
           return {
             ok: true,
             fallback: false,
             question_id: qid,
             scores,
             overall_score: overall,
-            missed_points: missed,
-            positive_points: positive,
+            missed_points: missed_points,
+            positive_points: positive_points,
             rationale,
             raw_llm_text: String(llmRaw),
           };
