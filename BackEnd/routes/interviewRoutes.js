@@ -6,6 +6,9 @@ import Question from "../models/Question.js";
 import Parameter from "../models/Parameter.js";
 import Interview from "../models/Interview.js";
 import { selectQuestions } from "../lib/selectQuestions.js";
+import PDFDocument from "pdfkit";
+import Transcript from "../models/Transcript.js";
+
 // add near other imports
 import { prepareSamplingPlanAndBuckets, sampleQuestionsFromPlan } from '../lib/sampling.js';
 
@@ -13,6 +16,387 @@ const router = express.Router()
 
 
 /// ADDED BY HAIDER!!!!
+
+router.get("/report/:interviewId", async (req, res) => {
+  try {
+    const { interviewId } = req.params;
+    
+    console.log("📄 Generating PDF report for interview:", interviewId);
+    
+    // 1. Fetch interview details
+    let interview = await Interview.findOne({ interviewId: interviewId }).lean();
+    if (!interview) {
+      interview = await Interview.findById(interviewId).lean();
+    }
+    
+    if (!interview) {
+      console.log("❌ Interview not found");
+      return res.status(404).json({ error: 'Interview not found' });
+    }
+    
+    console.log("✅ Interview found:", interview.title);
+    
+    // 2. Fetch transcript with scoring
+    let transcript = await Transcript.findOne({ interviewId: interviewId }).lean();
+    if (!transcript) {
+      try {
+        transcript = await Transcript.findById(interviewId).lean();
+      } catch (e) { }
+    }
+    
+    if (!transcript) {
+      console.log("❌ Transcript not found");
+      return res.status(404).json({ error: 'Transcript not found' });
+    }
+    
+    console.log("✅ Transcript found, overallScore:", transcript.overallScore);
+    
+    // 3. Get questions details from interview.answers
+    const questionDetails = interview.answers || [];
+    
+    // 4. Match transcript.perQuestion with questionDetails
+    const enhancedQuestions = (transcript.perQuestion || []).map(pq => {
+      const questionDetail = questionDetails.find(
+        q => String(q.question_id) === String(pq.question_id)
+      );
+      
+      return {
+        question_id: pq.question_id,
+        question_text: questionDetail?.question_text || 'Question not found',
+        question_title: questionDetail?.question_title || '',
+        expected_answer: questionDetail?.answer_text || '',
+        user_response: pq.combined_text || 'No response recorded',
+        score: pq.score || {},
+        category: pq.category || questionDetail?.category || 'general'
+      };
+    });
+    
+    // 5. Create PDF with better settings
+    const doc = new PDFDocument({ 
+      margin: 40,
+      size: 'A4',
+      layout: 'portrait',
+      info: {
+        Title: `Interview Report - ${interview.title}`,
+        Author: 'Interview Prep App',
+        Subject: 'Interview Feedback Report',
+        CreationDate: new Date(),
+        Keywords: 'interview, feedback, report, performance'
+      }
+    });
+    
+    // Set headers for browser display
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="Interview_Report_${interviewId}.pdf"`);
+    
+    doc.pipe(res);
+    
+    // Helper functions
+    function getScoreColor(score) {
+      if (!score || typeof score !== 'number') return '#6b7280';
+      if (score >= 0.8) return '#10b981'; // emerald
+      if (score >= 0.6) return '#f59e0b'; // amber
+      return '#ef4444'; // red
+    }
+    
+    function getPerformanceText(score) {
+      if (!score || typeof score !== 'number') return 'Not Rated';
+      if (score >= 0.8) return 'Excellent';
+      if (score >= 0.7) return 'Good';
+      if (score >= 0.6) return 'Satisfactory';
+      return 'Needs Improvement';
+    }
+    
+    // Function to wrap text and calculate box height
+    function calculateTextHeight(text, fontSize, maxWidth) {
+      const words = text.split(' ');
+      let lines = 0;
+      let currentLine = '';
+      
+      for (const word of words) {
+        const testLine = currentLine ? `${currentLine} ${word}` : word;
+        // Rough estimate: each character is about fontSize * 0.6 pixels wide
+        if ((testLine.length * fontSize * 0.6) > maxWidth) {
+          lines++;
+          currentLine = word;
+        } else {
+          currentLine = testLine;
+        }
+      }
+      if (currentLine) lines++;
+      
+      // Each line takes about fontSize * 1.2 pixels in height
+      return lines * fontSize * 1.2;
+    }
+    
+    // ========== COVER PAGE ==========
+    // Header with logo/company name
+    doc.rect(0, 0, doc.page.width, 80)
+       .fill('#111827'); // Dark gray
+    
+    doc.fontSize(24).fillColor('#ffffff')
+       .text('Interview Prep App', 50, 30)
+       .fontSize(14).fillColor('#d1d5db')
+       .text('Professional Interview Feedback Report', 50, 60);
+    
+    // Main title
+    doc.moveDown(4);
+    doc.fontSize(32).fillColor('#1e40af').text('INTERVIEW', { align: 'center' });
+    doc.fontSize(32).fillColor('#1e40af').text('FEEDBACK REPORT', { align: 'center' });
+    doc.moveDown(2);
+    
+    // Interview details box
+    const boxY = doc.y;
+    doc.rect(50, boxY, 500, 120)
+       .fill('#f3f4f6')
+       .stroke('#d1d5db');
+    
+    doc.fontSize(18).fillColor('#111827').text('Interview Details', 70, boxY + 20);
+    
+    doc.fontSize(12).fillColor('#374151')
+       .text(`Candidate: ${interview.title || 'Untitled Interview'}`, 70, boxY + 50)
+       .text(`Company: ${interview.company || 'Not specified'}`, 70, boxY + 70)
+       .text(`Position: ${interview.role || 'Not specified'}`, 70, boxY + 90);
+    
+    doc.fontSize(12).fillColor('#374151')
+       .text(`Date: ${interview.date ? new Date(interview.date).toLocaleDateString('en-US', { 
+         weekday: 'long', 
+         year: 'numeric', 
+         month: 'long', 
+         day: 'numeric' 
+       }) : 'Not specified'}`, 300, boxY + 50)
+       .text(`Report ID: ${interviewId.substring(0, 8)}`, 300, boxY + 70)
+       .text(`Generated: ${new Date().toLocaleDateString()}`, 300, boxY + 90);
+    
+    doc.moveDown(8);
+    
+    // Confidential footer
+    doc.fontSize(10).fillColor('#6b7280')
+       .text('CONFIDENTIAL - For candidate use only', { align: 'center' });
+    
+    // ========== EXECUTIVE SUMMARY PAGE ==========
+    doc.addPage();
+    
+    // Page header
+    doc.fontSize(20).fillColor('#111827')
+       .text('Executive Summary', 50, 50);
+    
+    doc.moveTo(50, 80).lineTo(550, 80).stroke('#d1d5db');
+    
+    doc.moveDown(1.5);
+    
+    // Performance summary box
+    const overallScore = transcript.overallScore || 0;
+    const scorePercent = Math.round(overallScore * 100);
+    const performanceText = getPerformanceText(overallScore);
+    
+    doc.rect(50, doc.y, 500, 100)
+       .fill('#f0f9ff')
+       .stroke('#0ea5e9');
+    
+    doc.fontSize(16).fillColor('#0369a1')
+       .text(`Performance Rating: ${performanceText}`, 70, doc.y + 20);
+    
+    doc.fontSize(14).fillColor('#374151')
+       .text(`Overall Performance: ${scorePercent}%`, 70, doc.y + 50);
+    
+    // Simple text display for overall score (no gauge)
+    doc.fontSize(12).fillColor('#6b7280')
+       .text(`Score Interpretation:`, 70, doc.y + 75);
+    
+    doc.moveDown(3);
+    
+    // Key metrics
+    doc.fontSize(16).fillColor('#111827')
+       .text('Key Metrics', 50, doc.y);
+    
+    const metrics = [
+      { label: 'Total Questions', value: enhancedQuestions.length },
+      { label: 'Questions Answered', value: enhancedQuestions.filter(q => q.user_response && q.user_response !== 'No response recorded').length },
+      { label: 'Average Question Score', value: `${Math.round((enhancedQuestions.reduce((sum, q) => sum + (q.score?.overall_score || q.score || 0), 0) / enhancedQuestions.length) * 100) || 0}%` }
+    ];
+    
+    const metricStartY = doc.y + 20;
+    metrics.forEach((metric, index) => {
+      const x = 50 + (index * 180);
+      doc.rect(x, metricStartY, 150, 60)
+         .fill(index % 2 === 0 ? '#f9fafb' : '#ffffff')
+         .stroke('#e5e7eb');
+      
+      doc.fontSize(12).fillColor('#6b7280')
+         .text(metric.label, x + 10, metricStartY + 15);
+      
+      doc.fontSize(18).fillColor('#111827')
+         .text(metric.value, x + 10, metricStartY + 35);
+    });
+    
+    doc.y = metricStartY + 80;
+    
+    // Recommendations
+    doc.fontSize(16).fillColor('#111827')
+       .text('Overall Recommendation', 50, doc.y);
+    
+    doc.rect(50, doc.y + 20, 500, 80)
+       .fill('#fef3c7')
+       .stroke('#f59e0b');
+    
+    let recommendation = '';
+    if (overallScore >= 0.8) {
+      recommendation = 'Excellent performance! You demonstrated strong technical knowledge and communication skills. Continue building on your strengths.';
+    } else if (overallScore >= 0.6) {
+      recommendation = 'Good performance with clear areas for improvement. Focus on enhancing your response structure and technical depth.';
+    } else {
+      recommendation = 'Needs improvement. Review fundamental concepts and practice structuring your responses more clearly.';
+    }
+    
+    doc.fontSize(11).fillColor('#92400e')
+       .text(recommendation, 70, doc.y + 40, { width: 460 });
+    
+    // ========== DETAILED ANALYSIS PAGES ==========
+    if (enhancedQuestions.length > 0) {
+      enhancedQuestions.forEach((q, index) => {
+        // Add new page for each question after first 2
+        if (index > 0 && index % 2 === 0) {
+          doc.addPage();
+          doc.y = 50;
+        }
+        
+        // Question header with performance text (no badge/bar)
+        const questionScore = q.score?.overall_score || q.score || 0;
+        const questionScorePercent = Math.round(questionScore * 100);
+        const questionPerformanceText = getPerformanceText(questionScore);
+        
+        // Question number and title
+        doc.fontSize(14).fillColor('#1e40af')
+           .text(`Question ${index + 1}: ${q.question_title || `Question #${index + 1}`}`, 50, doc.y);
+        
+        // Performance text on the same line
+        doc.fontSize(12).fillColor(getScoreColor(questionScore))
+           .text(`Performance: ${questionPerformanceText} (${questionScorePercent}%)`, 350, doc.y);
+        
+        doc.moveTo(50, doc.y + 20).lineTo(550, doc.y + 20).stroke('#d1d5db');
+        
+        doc.y += 30;
+        
+        // Calculate dynamic heights for question and response boxes
+        const questionTextHeight = Math.max(60, calculateTextHeight(q.question_text, 10, 480) + 30);
+        const responseTextHeight = Math.max(80, calculateTextHeight(q.user_response || 'No response provided', 10, 480) + 30);
+        
+        // Question text box with dynamic height
+        doc.rect(50, doc.y, 500, questionTextHeight)
+           .fill('#f8fafc')
+           .stroke('#e2e8f0');
+        
+        doc.fontSize(11).fillColor('#334155')
+           .text('Question:', 60, doc.y + 10);
+        
+        doc.fontSize(10).fillColor('#475569')
+           .text(q.question_text, 60, doc.y + 25, { 
+             width: 480,
+             height: questionTextHeight - 35,
+             ellipsis: true
+           });
+        
+        doc.y += questionTextHeight + 10;
+        
+        // Response box with dynamic height
+        doc.rect(50, doc.y, 500, responseTextHeight)
+           .fill('#f0fdf4')
+           .stroke('#bbf7d0');
+        
+        doc.fontSize(11).fillColor('#166534')
+           .text('Your Response:', 60, doc.y + 10);
+        
+        doc.fontSize(10).fillColor('#15803d')
+           .text(q.user_response || 'No response provided', 60, doc.y + 25, { 
+             width: 480,
+             height: responseTextHeight - 35,
+             ellipsis: true
+           });
+        
+        doc.y += responseTextHeight + 15;
+        
+        // Feedback sections
+        if (q.score?.feedback_points && q.score.feedback_points.length > 0) {
+          doc.fontSize(12).fillColor('#059669')
+             .text('Strengths:', 50, doc.y);
+          
+          q.score.feedback_points.forEach((point, i) => {
+            if (i < 2) { // Limit to 2 strengths
+              doc.fontSize(10).fillColor('#065f46')
+                 .text(`✓ ${point}`, 60, doc.y + 15, { width: 470 });
+              doc.y += 15;
+            }
+          });
+          doc.y += 10;
+        }
+        
+        if (q.score?.missed_points && q.score.missed_points.length > 0) {
+          doc.fontSize(12).fillColor('#dc2626')
+             .text('Areas for Improvement:', 50, doc.y);
+          
+          q.score.missed_points.forEach((point, i) => {
+            if (i < 2) { // Limit to 2 improvements
+              doc.fontSize(10).fillColor('#991b1b')
+                 .text(`• ${point}`, 60, doc.y + 15, { width: 470 });
+              doc.y += 15;
+            }
+          });
+        }
+        
+        doc.y += 15;
+        
+        // Add separator between questions
+        if (index < enhancedQuestions.length - 1) {
+          doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke('#e5e7eb');
+          doc.moveDown(1);
+        }
+      });
+    } else {
+      doc.addPage();
+      doc.fontSize(14).fillColor('#6b7280')
+         .text('No detailed question analysis available.', { align: 'center', y: 200 });
+    }
+    
+    // ========== FINAL PAGE ==========
+    doc.addPage();
+    
+    // Thank you message
+    doc.fontSize(24).fillColor('#1e40af')
+       .text('Thank You', { align: 'center', y: 150 });
+    
+    doc.fontSize(14).fillColor('#4b5563')
+       .text('We hope this feedback helps you improve your interview skills.', { align: 'center', y: 200 });
+    
+    // Contact info
+    doc.rect(100, 250, 400, 100)
+       .fill('#f9fafb')
+       .stroke('#d1d5db');
+    
+    doc.fontSize(16).fillColor('#111827')
+       .text('Need More Help?', 120, 270);
+    
+    doc.fontSize(11).fillColor('#4b5563')
+       .text('• Schedule a mock interview session', 120, 300)
+       .text('• Review our interview preparation guide', 120, 320)
+       .text('• Contact support: support@interviewprepapp.com', 120, 340);
+    
+    // Footer
+    doc.fontSize(9).fillColor('#9ca3af')
+       .text(`Report ID: ${interviewId} | Generated: ${new Date().toISOString()}`, 50, 500, { align: 'center' })
+       .text('© Interview Prep App. All rights reserved.', 50, 515, { align: 'center' })
+       .text('Page ' + doc.bufferedPageRange().count, 50, 530, { align: 'center' });
+    
+    // Finalize PDF
+    doc.end();
+    
+    console.log("✅ PDF generated successfully");
+    
+  } catch (error) {
+    console.error('❌ Error generating PDF report:', error);
+    res.status(500).json({ error: 'Failed to generate report', details: error.message });
+  }
+});
 
 router.get('/user/interviews', async (req, res) => {
   try {
