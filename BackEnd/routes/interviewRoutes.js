@@ -60,6 +60,21 @@ router.get("/report/:interviewId", async (req, res) => {
         q => String(q.question_id) === String(pq.question_id)
       );
       
+      // Extract recommendations from scoring object
+      let recommendations = [];
+      if (pq.score) {
+        // Check multiple possible fields for recommendations
+        if (pq.score.areas_for_improvement && Array.isArray(pq.score.areas_for_improvement)) {
+          recommendations = pq.score.areas_for_improvement;
+        } else if (pq.score.recommendations && Array.isArray(pq.score.recommendations)) {
+          recommendations = pq.score.recommendations;
+        } else if (pq.score.suggestions && Array.isArray(pq.score.suggestions)) {
+          recommendations = pq.score.suggestions;
+        } else if (pq.score.missed_points && Array.isArray(pq.score.missed_points)) {
+          recommendations = pq.score.missed_points.map(point => `Missing: ${point}`);
+        }
+      }
+      
       return {
         question_id: pq.question_id,
         question_text: questionDetail?.question_text || 'Question not found',
@@ -67,11 +82,48 @@ router.get("/report/:interviewId", async (req, res) => {
         expected_answer: questionDetail?.answer_text || '',
         user_response: pq.combined_text || 'No response recorded',
         score: pq.score || {},
-        category: pq.category || questionDetail?.category || 'general'
+        category: pq.category || questionDetail?.category || 'general',
+        recommendations: recommendations.length > 0 ? recommendations : ['No recommendations available for this question.']
       };
     });
     
-    // 5. Create PDF with better settings
+    // 5. Extract overall recommendations if available in transcript
+    let overallRecommendations = [];
+    if (transcript.overallRecommendations && Array.isArray(transcript.overallRecommendations)) {
+      overallRecommendations = transcript.overallRecommendations;
+    } else if (transcript.score?.recommendations && Array.isArray(transcript.score.recommendations)) {
+      overallRecommendations = transcript.score.recommendations;
+    } else if (transcript.perQuestion) {
+      // Collect unique recommendations from all questions
+      const allRecs = enhancedQuestions.flatMap(q => q.recommendations);
+      overallRecommendations = [...new Set(allRecs.filter(rec => rec !== 'No recommendations available for this question.'))];
+    }
+    
+    if (overallRecommendations.length === 0) {
+      // Fallback to existing logic if no recommendations in DB
+      const overallScore = transcript.overallScore || 0;
+      if (overallScore >= 0.8) {
+        overallRecommendations = ['Excellent performance! You demonstrated strong technical knowledge and communication skills. Continue building on your strengths.'];
+      } else if (overallScore >= 0.6) {
+        overallRecommendations = ['Good performance with clear areas for improvement. Focus on enhancing your response structure and technical depth.'];
+      } else {
+        overallRecommendations = ['Needs improvement. Review fundamental concepts and practice structuring your responses more clearly.'];
+      }
+    }
+    
+    // 6. Calculate average question score safely
+    const totalScore = enhancedQuestions.reduce((sum, q) => {
+      const score = q.score?.overall_score || q.score || 0;
+      return sum + (typeof score === 'number' ? score : 0);
+    }, 0);
+    
+    const avgQuestionScore = enhancedQuestions.length > 0 
+      ? totalScore / enhancedQuestions.length 
+      : 0;
+    
+    const avgQuestionScorePercent = Math.round(avgQuestionScore * 100) || 0;
+    
+    // 7. Create PDF with better settings
     const doc = new PDFDocument({ 
       margin: 40,
       size: 'A4',
@@ -100,7 +152,7 @@ router.get("/report/:interviewId", async (req, res) => {
     }
     
     function getPerformanceText(score) {
-      if (!score || typeof score !== 'number') return 'Not Rated';
+      if (!score || typeof score !== 'number') return 'Needs Improvement';
       if (score >= 0.8) return 'Excellent';
       if (score >= 0.7) return 'Good';
       if (score >= 0.6) return 'Satisfactory';
@@ -186,8 +238,8 @@ router.get("/report/:interviewId", async (req, res) => {
     doc.moveDown(1.5);
     
     // Performance summary box
-    const overallScore = transcript.overallScore || 0;
-    const scorePercent = Math.round(overallScore * 100);
+    const overallScore = transcript.overallScore || 0; 
+    const scorePercent = Math.round(overallScore * 100) || 0; // Fix: Ensure 0 instead of NaN
     const performanceText = getPerformanceText(overallScore);
     
     doc.rect(50, doc.y, 500, 100)
@@ -200,10 +252,6 @@ router.get("/report/:interviewId", async (req, res) => {
     doc.fontSize(14).fillColor('#374151')
        .text(`Overall Performance: ${scorePercent}%`, 70, doc.y + 50);
     
-    // Simple text display for overall score (no gauge)
-    doc.fontSize(12).fillColor('#6b7280')
-       .text(`Score Interpretation:`, 70, doc.y + 75);
-    
     doc.moveDown(3);
     
     // Key metrics
@@ -213,7 +261,7 @@ router.get("/report/:interviewId", async (req, res) => {
     const metrics = [
       { label: 'Total Questions', value: enhancedQuestions.length },
       { label: 'Questions Answered', value: enhancedQuestions.filter(q => q.user_response && q.user_response !== 'No response recorded').length },
-      { label: 'Average Question Score', value: `${Math.round((enhancedQuestions.reduce((sum, q) => sum + (q.score?.overall_score || q.score || 0), 0) / enhancedQuestions.length) * 100) || 0}%` }
+      { label: 'Average Question Score', value: `${avgQuestionScorePercent}%` } // Use pre-calculated value
     ];
     
     const metricStartY = doc.y + 20;
@@ -232,25 +280,27 @@ router.get("/report/:interviewId", async (req, res) => {
     
     doc.y = metricStartY + 80;
     
-    // Recommendations
+    // Overall Recommendations from database
     doc.fontSize(16).fillColor('#111827')
-       .text('Overall Recommendation', 50, doc.y);
+       .text('Overall Recommendations', 50, doc.y);
     
-    doc.rect(50, doc.y + 20, 500, 80)
+    const recommendationHeight = Math.max(100, calculateTextHeight(overallRecommendations.join(' • '), 11, 460) + 40);
+    
+    doc.rect(50, doc.y + 20, 500, recommendationHeight)
        .fill('#fef3c7')
        .stroke('#f59e0b');
     
-    let recommendation = '';
-    if (overallScore >= 0.8) {
-      recommendation = 'Excellent performance! You demonstrated strong technical knowledge and communication skills. Continue building on your strengths.';
-    } else if (overallScore >= 0.6) {
-      recommendation = 'Good performance with clear areas for improvement. Focus on enhancing your response structure and technical depth.';
+    if (overallRecommendations.length > 0) {
+      overallRecommendations.forEach((rec, index) => {
+        doc.fontSize(11).fillColor('#92400e')
+           .text(`• ${rec}`, 70, doc.y + 40 + (index * 20), { width: 460 });
+      });
     } else {
-      recommendation = 'Needs improvement. Review fundamental concepts and practice structuring your responses more clearly.';
+      doc.fontSize(11).fillColor('#92400e')
+         .text('No overall recommendations available.', 70, doc.y + 40, { width: 460 });
     }
     
-    doc.fontSize(11).fillColor('#92400e')
-       .text(recommendation, 70, doc.y + 40, { width: 460 });
+    doc.y += recommendationHeight + 20;
     
     // ========== DETAILED ANALYSIS PAGES ==========
     if (enhancedQuestions.length > 0) {
@@ -263,7 +313,7 @@ router.get("/report/:interviewId", async (req, res) => {
         
         // Question header with performance text (no badge/bar)
         const questionScore = q.score?.overall_score || q.score || 0;
-        const questionScorePercent = Math.round(questionScore * 100);
+        const questionScorePercent = Math.round(questionScore * 100) || 0; // Fix: Ensure 0 instead of NaN
         const questionPerformanceText = getPerformanceText(questionScore);
         
         // Question number and title
@@ -298,12 +348,7 @@ router.get("/report/:interviewId", async (req, res) => {
            });
         
         doc.y += questionTextHeight + 10;
-        
-        // Response box with dynamic height
-        doc.rect(50, doc.y, 500, responseTextHeight)
-           .fill('#f0fdf4')
-           .stroke('#bbf7d0');
-        
+                
         doc.fontSize(11).fillColor('#166534')
            .text('Your Response:', 60, doc.y + 10);
         
@@ -316,7 +361,26 @@ router.get("/report/:interviewId", async (req, res) => {
         
         doc.y += responseTextHeight + 15;
         
-        // Feedback sections
+        // Display recommendations from database
+        if (q.recommendations && q.recommendations.length > 0) {
+          const recHeight = Math.max(40, calculateTextHeight(q.recommendations.join(' '), 10, 480) + 30);
+          
+          doc.rect(50, doc.y, 500, recHeight)
+             .fill('#fff7ed')
+             .stroke('#fb923c');
+          
+          doc.fontSize(11).fillColor('#c2410c')
+             .text('Recommendations for Improvement:', 60, doc.y + 15);
+          
+          q.recommendations.forEach((rec, recIndex) => {
+            doc.fontSize(10).fillColor('#9a3412')
+               .text(`• ${rec}`, 60, doc.y + 35 + (recIndex * 15), { width: 470 });
+          });
+          
+          doc.y += recHeight + 15;
+        }
+        
+        // Feedback sections (if still needed alongside recommendations)
         if (q.score?.feedback_points && q.score.feedback_points.length > 0) {
           doc.fontSize(12).fillColor('#059669')
              .text('Strengths:', 50, doc.y);
@@ -330,21 +394,6 @@ router.get("/report/:interviewId", async (req, res) => {
           });
           doc.y += 10;
         }
-        
-        if (q.score?.missed_points && q.score.missed_points.length > 0) {
-          doc.fontSize(12).fillColor('#dc2626')
-             .text('Areas for Improvement:', 50, doc.y);
-          
-          q.score.missed_points.forEach((point, i) => {
-            if (i < 2) { // Limit to 2 improvements
-              doc.fontSize(10).fillColor('#991b1b')
-                 .text(`• ${point}`, 60, doc.y + 15, { width: 470 });
-              doc.y += 15;
-            }
-          });
-        }
-        
-        doc.y += 15;
         
         // Add separator between questions
         if (index < enhancedQuestions.length - 1) {
