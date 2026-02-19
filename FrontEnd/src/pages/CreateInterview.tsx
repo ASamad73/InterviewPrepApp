@@ -47,7 +47,8 @@ export default function CreateInterview(): JSX.Element {
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
       }
-
+      
+      console.log("sending save-parameter request");
       const res = await fetch(`${import.meta.env.VITE_API_URL}/api/interviews/save-parameters`, {
         method: "POST",
         headers,

@@ -1169,11 +1169,6 @@ function buildLLMScoringPrompt({ questionTitle, questionText, expectedAnswer, us
   `.trim();
 }
 
-/* ----------------------
-   scoreResponses — deterministic, no LLM by default
-   (small change: accepts useLLM in options and will attempt LLM if enabled & configured)
-   ---------------------- */
-
 export async function scoreResponses({
   ordered = [],
   DEBUG = false,

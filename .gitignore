@@ -27,6 +27,7 @@ dist-ssr
 **/back.env
 **/.env
 **/refine_qas.js
+**/venv
 **/Dockerfile
 **/docker-compose.yml
 **/docker-compose.override.yml

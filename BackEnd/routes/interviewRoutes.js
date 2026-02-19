@@ -213,6 +213,7 @@ router.get('/extract-qas', async (req, res) => {
 router.post('/save-parameters', async (req, res) => {
   try {
     // === AUTH (unchanged - perfect) ===
+    console.log("save-parameter request reached");
     const authHeader = req.headers.authorization || req.headers.Authorization;
     if (!authHeader?.startsWith('Bearer ')) {
       return res.status(401).json({ message: 'Unauthorized - No token' });

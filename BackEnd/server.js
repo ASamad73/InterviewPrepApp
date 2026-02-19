@@ -1,6 +1,6 @@
 // server.js
 import http from "http";
-import { app } from "./app.js";
+import  app  from "./app.js";
 import mongoose from "mongoose";
 import { config } from "dotenv";
 import { initSocket } from "./lib/socket.js"; // <--- new module

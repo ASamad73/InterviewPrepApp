@@ -1,5 +1,7 @@
 // server/socket.js
+import app from "../app.js"
 import { Server } from "socket.io";
+import conversationManager from "./conversationManager.js";
 
 let ioInstance = null;
 
@@ -19,7 +21,6 @@ export function initSocket(server, opts = {}) {
     ...opts,
   });
 
-  // optional: attach basic connection handler
   ioInstance.on("connection", (socket) => {
     console.log(" A user connected:", socket.id);
 
@@ -31,11 +32,50 @@ export function initSocket(server, opts = {}) {
       }
     });
 
+    // inside ioInstance.on('connection', socket => { ... })
+    socket.on("played", async ({ interviewId }) => {
+      console.log("played event for", interviewId);
+      
+      const state = conversationManager.getState(interviewId);
+      
+      if (state && state.stage === "permission") {
+        try {
+          const backendBase = `http://localhost:8000`;
+          await fetch(`${backendBase}/api/model/${encodeURIComponent(interviewId)}/permission`, { method: "POST" });
+        } catch (err) {
+          console.error("Error calling internal permission route:", err);
+          ioInstance.to(interviewId).emit("start_record", { mode: "permission" });
+        }
+        return;
+      }
+
+      ioInstance.to(interviewId).emit("start_record", { mode: "answer" });
+    });
+
+
+    socket.on("user_audio", async ({ interviewId, audioBase64 }) => {
+      try {
+        // convert base64 to buffer and forward to STT endpoint in same way as /upload-audio
+        const buffer = Buffer.from(audioBase64, "base64");
+        // call helper that proxies buffer to STT and scoring (we'll provide helper function)
+        const result = await require("./lib/orchestrator").handleUserAudioBuffer(interviewId, buffer);
+        // result contains transcript, scoring, next audioUrl etc.
+        io.to(interviewId).emit("scoring_result", result);
+        if (result.audioUrl) {
+          io.to(interviewId).emit("play_audio", { audioUrl: result.audioUrl, utteranceText: result.nextText });
+        }
+      } catch (err) {
+        console.error("user_audio handler failed", err);
+        io.to(interviewId).emit("error", { message: "server user_audio failed" });
+      }
+    });
+
     socket.on("disconnect", () => {
       console.log("socket disconnected:", socket.id);
     });
   });
 
+  app.locals.io = ioInstance; 
   return ioInstance;
 }
 

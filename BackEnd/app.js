@@ -5,8 +5,9 @@ import bodyparser from "body-parser";
 // import { clerkMiddleware } from '@clerk/clerk-sdk-node';
 import interviwewRoutes from "./routes/interviewRoutes.js";
 import agentRoutes from "./routes/agentRoutes.js";
+import modelRoutes from "./routes/modelRoutes.js";
 
-export const app = express();
+const app = express();
 
 app.use(cors({
   origin: [
@@ -26,3 +27,7 @@ app.use(bodyparser.json({
 
 app.use('/api/interviews', interviwewRoutes);
 app.use('/api/webhooks', agentRoutes);
+app.use('/api/model', modelRoutes);
+
+
+export default app;
